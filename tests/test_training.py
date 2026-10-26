@@ -48,6 +48,18 @@ def test_gradient_matches_finite_differences():
 
 
 # ---------------------------------------------------------------- training
+def test_valid_integer_arguments_are_preserved():
+    """Regression: validated epochs/batch_size must remain integers, not become None."""
+    x, y = _linear_data(20)
+    zero_epochs = train(PolynomialLogisticModel(1), x, y, epochs=0)
+    assert len(zero_epochs.loss_history) == 1
+
+    one_epoch = train(
+        PolynomialLogisticModel(1), x, y, epochs=1, batch_size=4
+    )
+    assert len(one_epoch.loss_history) == 2
+
+
 def test_loss_decreases_on_learnable_data():
     x, y = _linear_data()
     r = train(PolynomialLogisticModel(1), x, y, lr=0.5, epochs=200)
