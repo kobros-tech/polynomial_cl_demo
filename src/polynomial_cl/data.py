@@ -77,7 +77,7 @@ def _validate_integer(value, name, *, minimum=0):
     if isinstance(value, (bool, np.bool_)) or not isinstance(
         value, (int, np.integer)
     ):
-        raise ValueError(f"{name} must be an integer >= {minimum}")
+        raise TypeError(f"{name} must be an integer >= {minimum}")
     if value < minimum:
         raise ValueError(f"{name} must be an integer >= {minimum}")
     return int(value)
