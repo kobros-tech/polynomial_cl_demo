@@ -43,3 +43,19 @@ def test_known_values():
 def test_wrapper_exposes_metadata():
     f = PolynomialFeatures(4)
     assert f.degree == 4 and f.n_features == 15 and f.names == feature_names(4)
+
+
+@pytest.mark.parametrize("degree", [2.9, True, np.float64(3), np.bool_(True), -1])
+def test_invalid_degree_is_rejected_consistently(degree):
+    with pytest.raises(ValueError, match="degree"):
+        PolynomialFeatures(degree)
+    with pytest.raises(ValueError, match="degree"):
+        feature_names(degree)
+    with pytest.raises(ValueError, match="degree"):
+        n_features(degree)
+    with pytest.raises(ValueError, match="degree"):
+        polynomial_features([[0.0, 0.0]], degree)
+
+
+def test_numpy_integer_degree_is_accepted():
+    assert PolynomialFeatures(np.int64(2)).degree == 2
