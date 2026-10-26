@@ -65,7 +65,7 @@ def test_boundary_is_nonlinear():
 
 
 @pytest.mark.parametrize(
-    "kwargs, message",
+    "kwargs, error, message",
     [
         ({"kind": "validation"}, ValueError, "kind must be 'train' or 'test'"),
         ({"n": -1}, ValueError, "n must be an integer"),
