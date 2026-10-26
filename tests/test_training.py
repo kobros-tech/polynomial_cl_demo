@@ -54,9 +54,7 @@ def test_valid_integer_arguments_are_preserved():
     zero_epochs = train(PolynomialLogisticModel(1), x, y, epochs=0)
     assert len(zero_epochs.loss_history) == 1
 
-    one_epoch = train(
-        PolynomialLogisticModel(1), x, y, epochs=1, batch_size=4
-    )
+    one_epoch = train(PolynomialLogisticModel(1), x, y, epochs=1, batch_size=4)
     assert len(one_epoch.loss_history) == 2
 
 
@@ -287,7 +285,6 @@ def test_null_basis_cannot_update_frozen_coefficients():
         )
 
 
-
 def test_null_basis_rejects_tiny_nonzero_entry_for_frozen_coefficient():
     x, y = _circle_data(60)
     basis = np.zeros((6, 1))
@@ -304,6 +301,30 @@ def test_null_basis_rejects_tiny_nonzero_entry_for_frozen_coefficient():
             trainable=mask,
             null_basis=basis,
         )
+
+
+@pytest.mark.parametrize(
+    "degree, exception",
+    [
+        (2.5, TypeError),
+        (True, TypeError),
+        (np.bool_(True), TypeError),
+        (0, ValueError),
+        (-1, ValueError),
+    ],
+)
+def test_processed_degrees_distinguish_type_from_value_errors(degree, exception):
+    exps = make_experiences(n_train=20, n_test=20, seed=0)
+    cfg = make_config("ordinary", degrees=[degree], epochs=1, stop_after=1)
+    with pytest.raises(exception, match="degree"):
+        run_continual(exps, cfg)
+
+
+def test_processed_degrees_accept_positive_integers():
+    exps = make_experiences(n_train=20, n_test=20, seed=0)
+    cfg = make_config("ordinary", degrees=[1], epochs=1, stop_after=1)
+    result = run_continual(exps, cfg)
+    assert result.records[0].degree_after == 1
 
 
 @pytest.mark.parametrize(
@@ -337,7 +358,6 @@ def test_invalid_optimizer_arguments_fail_clearly(kwargs, message):
     x, y = _linear_data(20)
     with pytest.raises(ValueError, match=message):
         train(PolynomialLogisticModel(1), x, y, **kwargs)
-
 
 
 def test_preservation_strategy_requires_reference_points():

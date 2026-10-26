@@ -15,7 +15,7 @@ degree grows 1 -> 10, `lr = 0.5`, 300 full-batch epochs per experience, replay c
 ## 2. What was measured (seed 0, after experience 10)
 
 | strategy | mean acc (10 exps) | acc on exp 10 | acc on exp 1 | mean forgetting | worst forgetting seen |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | joint training (notebook 01, degree 10, 5000 epochs) | 0.987 | 0.986 | 0.990 | - | - |
 | `ordinary_no_replay` | 0.867 | 0.986 | 0.928 | 0.122 | 0.310 |
 | `ordinary` (replay) | 0.966 | 0.970 | 0.978 | 0.007 | 0.048 |

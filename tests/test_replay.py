@@ -76,24 +76,23 @@ def test_balanced_batch_composition(exps):
     assert d.counts == {4: 10, 1: 5, 2: 0, 3: 20}
 
 
-
 @pytest.mark.parametrize(
-    "m_current, m_replay, message",
+    "m_current, m_replay, error, message",
     [
-        (-1, 0, "m_current"),
-        (1.5, 0, "m_current"),
-        (True, 0, "m_current"),
-        (1, -1, "m_replay"),
-        (1, 1.5, "m_replay"),
-        (1, {1: -1}, "m_replay\\[1\\]"),
-        (1, {1: 0.5}, "m_replay\\[1\\]"),
+        (-1, 0, ValueError, "m_current"),
+        (1.5, 0, TypeError, "m_current"),
+        (True, 0, TypeError, "m_current"),
+        (1, -1, ValueError, "m_replay"),
+        (1, 1.5, TypeError, "m_replay"),
+        (1, {1: -1}, ValueError, "m_replay\\[1\\]"),
+        (1, {1: 0.5}, TypeError, "m_replay\\[1\\]"),
     ],
 )
-def test_batch_rejects_invalid_sample_counts(exps, m_current, m_replay, message):
+def test_batch_rejects_invalid_sample_counts(exps, m_current, m_replay, error, message):
     buf = ReplayBuffer(20)
     buf.add_experience(exps[0].train)
 
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(error, match=message):
         build_batch(exps[1].train, buf, m_current, m_replay)
 
 
@@ -117,9 +116,12 @@ def test_insufficient_samples_policy(exps):
     assert rep.counts[1] == 50
 
 
-@pytest.mark.parametrize("capacity", [0, -1, 1.5, True])
-def test_buffer_rejects_invalid_capacity(capacity):
-    with pytest.raises(ValueError, match="capacity_per_experience"):
+@pytest.mark.parametrize(
+    "capacity, error",
+    [(0, ValueError), (-1, ValueError), (1.5, TypeError), (True, TypeError)],
+)
+def test_buffer_rejects_invalid_capacity(capacity, error):
+    with pytest.raises(error, match="capacity_per_experience"):
         ReplayBuffer(capacity)
 
 
@@ -129,11 +131,14 @@ def test_capacity_respected(exps):
     assert buf.size(1) == 33
 
 
-@pytest.mark.parametrize("count", [-1, 1.5, True])
-def test_reference_inputs_rejects_invalid_count(exps, count):
+@pytest.mark.parametrize(
+    "count, error",
+    [(-1, ValueError), (1.5, TypeError), (True, TypeError)],
+)
+def test_reference_inputs_rejects_invalid_count(exps, count, error):
     buf = ReplayBuffer(20)
     buf.add_experience(exps[0].train)
-    with pytest.raises(ValueError, match="n_per_experience"):
+    with pytest.raises(error, match="n_per_experience"):
         buf.reference_inputs(count)
 
 
