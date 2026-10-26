@@ -192,7 +192,10 @@ def test_strategy_b_in_the_loop_respects_constraint_and_frozen_mask():
         )
         for r in res.records[1:]:
             assert r.ref_score_change < 1e-9
-            assert r.frozen_max_change is None  # no coefficients are frozen in these strategies
+            if name == "strategy_b_all":
+                assert r.frozen_max_change is None  # all g coefficients are trainable
+            else:
+                assert r.frozen_max_change == 0.0  # old g coefficients are frozen
             assert r.preserved_component_max_change == 0.0
             assert r.combined_max_coefficient_change >= 0.0
             assert r.null_dim is not None
