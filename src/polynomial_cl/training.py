@@ -73,6 +73,7 @@ def _positive_int(value, name, *, allow_zero=False):
     if value < minimum:
         qualifier = "non-negative" if allow_zero else "positive"
         raise ValueError(f"{name} must be {qualifier}")
+    return int(value)
 
 
 def train(
