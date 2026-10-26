@@ -406,7 +406,14 @@ def run_continual(
                 old_score_change(sb, sa),
                 prediction_flip_fraction(sb, sa),
             )
-        fmax, l1 = parameter_changes(expanded.w, after.w, mask)
+        # A frozen-coefficient diagnostic is undefined when every coefficient is
+        # trainable. Do not report 0.0 for an empty frozen set.
+        fmax = (
+            None
+            if np.all(mask)
+            else parameter_changes(expanded.w, after.w, mask)[0]
+        )
+        _, l1 = parameter_changes(expanded.w, after.w, mask)
         preserved_change = 0.0 if cfg.composed else None
         combined_change = float(np.max(np.abs(after.w - expanded.w)))
 
