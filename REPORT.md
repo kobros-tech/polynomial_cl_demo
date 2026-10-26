@@ -7,7 +7,7 @@ degree grows 1 -> 10, `lr = 0.5`, 300 full-batch epochs per experience, replay c
 ## 1. What is guaranteed (by construction, and covered by tests)
 
 * **Expansion invariant.** Old coefficients are copied bit-for-bit, new ones are zero, so `f_{d+1} = f_d` up to float rounding. Measured in the continual loop on train, test, random and out-of-region inputs at every expansion: max score difference <= 1.8e-12, max probability difference <= 1.4e-14 (the loop would raise above 1e-9).
-* **Frozen coefficients never change.** Asserted exactly (bit equality) inside `train`; measured `frozen_max_change = 0` for every run.
+* **Explicitly frozen coefficients never change.** Asserted exactly (bit equality) inside `train`. The frozen-coefficient maximum is now reported as unavailable when a strategy has no frozen coefficients, rather than using a vacuous zero. The report's historical tables predate this diagnostic correction.
 * **Strategy B constraint.** `g(x_ref) = 0` holds at the reference inputs to rounding: max change at reference inputs <= 2.7e-15, zero prediction flips there, at every experience.
 * **Representational identities.** Unconstrained `f_old + g` over all coefficients is the same optimisation problem as ordinary training (observed: identical rows in every table); with g restricted to new coefficients it equals `frozen_old`.
 * **Not guaranteed:** that preserving `f_old` at finite reference points preserves it anywhere else, or that a preserved/frozen old component keeps the combined classifier's predictions.
