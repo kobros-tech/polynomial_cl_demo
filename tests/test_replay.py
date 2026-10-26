@@ -76,6 +76,37 @@ def test_balanced_batch_composition(exps):
     assert d.counts == {4: 10, 1: 5, 2: 0, 3: 20}
 
 
+
+@pytest.mark.parametrize(
+    "m_current, m_replay, message",
+    [
+        (-1, 0, "m_current"),
+        (1.5, 0, "m_current"),
+        (True, 0, "m_current"),
+        (1, -1, "m_replay"),
+        (1, 1.5, "m_replay"),
+        (1, {1: -1}, "m_replay\\[1\\]"),
+        (1, {1: 0.5}, "m_replay\\[1\\]"),
+    ],
+)
+def test_batch_rejects_invalid_sample_counts(exps, m_current, m_replay, message):
+    buf = ReplayBuffer(20)
+    buf.add_experience(exps[0].train)
+
+    with pytest.raises(ValueError, match=message):
+        build_batch(exps[1].train, buf, m_current, m_replay)
+
+
+def test_batch_allows_zero_sample_counts(exps):
+    buf = ReplayBuffer(20)
+    buf.add_experience(exps[0].train)
+
+    batch = build_batch(exps[1].train, buf, 0, {1: 0})
+
+    assert len(batch.y) == 0
+    assert batch.counts == {2: 0, 1: 0}
+
+
 def test_insufficient_samples_policy(exps):
     buf = ReplayBuffer(20)
     buf.add_experience(exps[0].train)
