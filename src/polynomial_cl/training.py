@@ -318,6 +318,8 @@ def run_continual(
         raise ValueError(f"degrees must contain at least {K} entries for the processed experiences")
     if any(isinstance(d, bool) or not isinstance(d, (int, np.integer)) or d < 1 for d in degrees[:K]):
         raise ValueError("each processed degree must be a positive integer")
+    if any(later < earlier for earlier, later in zip(degrees[:K], degrees[1:K])):
+        raise ValueError("processed degrees must be non-decreasing")
     if cfg.preserve and not cfg.composed:
         raise ValueError("preserve=True requires composed=True")
     buffer = ReplayBuffer(cfg.capacity, cfg.seed)
