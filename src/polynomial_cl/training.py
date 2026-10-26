@@ -342,8 +342,7 @@ def run_continual(
             f"degrees must contain at least {K} entries for the processed experiences"
         )
     if any(
-        isinstance(d, (bool, np.bool_))
-        or not isinstance(d, (int, np.integer))
+        isinstance(d, (bool, np.bool_)) or not isinstance(d, (int, np.integer))
         for d in degrees[:K]
     ):
         raise TypeError("each processed degree must be an integer")
