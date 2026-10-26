@@ -64,13 +64,36 @@ class Experience:
 
 
 def experience_window(exp_id: int, n_experiences: int = 10):
+    n_experiences = _validate_integer(n_experiences, "n_experiences", minimum=1)
+    exp_id = _validate_integer(exp_id, "exp_id", minimum=1)
+    if exp_id > n_experiences:
+        raise ValueError("exp_id must be <= n_experiences")
     lo, hi = DOMAIN
     width = (hi - lo) / n_experiences
     return (lo + (exp_id - 1) * width, lo + exp_id * width)
 
 
+def _validate_integer(value, name, *, minimum=0):
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+        value, (int, np.integer)
+    ):
+        raise ValueError(f"{name} must be an integer >= {minimum}")
+    if value < minimum:
+        raise ValueError(f"{name} must be an integer >= {minimum}")
+    return int(value)
+
+
 def generate_split(exp_id, n, seed, kind="train", noise=0.0, n_experiences=10) -> Split:
     """`noise` = probability of flipping each label (labels only; inputs are exact)."""
+    if kind not in _SPLIT_CODE:
+        raise ValueError("kind must be 'train' or 'test'")
+    n = _validate_integer(n, "n", minimum=0)
+    n_experiences = _validate_integer(n_experiences, "n_experiences", minimum=1)
+    exp_id = _validate_integer(exp_id, "exp_id", minimum=1)
+    if exp_id > n_experiences:
+        raise ValueError("exp_id must be <= n_experiences")
+    if not np.isfinite(noise) or not 0.0 <= noise <= 1.0:
+        raise ValueError("noise must be finite and between 0 and 1")
     rng = np.random.default_rng([seed, exp_id, _SPLIT_CODE[kind]])
     a, b = experience_window(exp_id, n_experiences)
     x = np.column_stack([rng.uniform(a, b, n), rng.uniform(*DOMAIN, n)])
