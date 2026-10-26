@@ -23,7 +23,7 @@ import numpy as np
 def _validate_degree(degree: int) -> int:
     """Require a non-negative integer degree; booleans are not valid degrees."""
     if isinstance(degree, (bool, np.bool_)) or not isinstance(degree, (int, np.integer)):
-        raise ValueError("degree must be a non-negative integer")
+        raise TypeError("degree must be a non-negative integer")
     if degree < 0:
         raise ValueError("degree must be >= 0")
     return int(degree)
