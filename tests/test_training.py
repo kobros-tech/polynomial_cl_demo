@@ -192,7 +192,9 @@ def test_strategy_b_in_the_loop_respects_constraint_and_frozen_mask():
         )
         for r in res.records[1:]:
             assert r.ref_score_change < 1e-9
-            assert r.frozen_max_change == 0.0
+            assert r.frozen_max_change is None  # no coefficients are frozen in these strategies
+            assert r.preserved_component_max_change == 0.0
+            assert r.combined_max_coefficient_change >= 0.0
             assert r.null_dim is not None
     res_new = run_continual(
         exps,
@@ -241,3 +243,43 @@ def test_no_replay_strategy_really_has_no_replay():
         sum(v for k, v in r.batch_counts.items() if k != r.t + 1) == 0
         for r in res.records
     )
+
+
+def test_constrained_training_rejects_unequal_active_learning_rates():
+    x, y = _circle_data(60)
+    basis = preservation_null_basis(2, x[:2])
+    lr = np.array([0.1, 0.2, 0.1, 0.1, 0.1, 0.1])
+    with pytest.raises(ValueError, match="one shared learning rate"):
+        train(PolynomialLogisticModel(2), x, y, lr=lr, epochs=1, null_basis=basis)
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"scope": "new_only"}, "scope"),
+        ({"degrees": [1]}, "degrees"),
+        ({"batch_size": 0}, "batch_size"),
+        ({"m_current": 0}, "m_current"),
+        ({"lr": -0.1}, "lr"),
+    ],
+)
+def test_invalid_continual_configuration_fails_before_training(kwargs, message):
+    exps = make_experiences(n_train=20, n_test=20, seed=0)
+    cfg = make_config("ordinary", epochs=1, **kwargs)
+    with pytest.raises(ValueError, match=message):
+        run_continual(exps, cfg)
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"lr": np.array([0.1, 0.2])}, "shape"),
+        ({"lr": -0.1}, "non-negative"),
+        ({"batch_size": 0}, "batch_size"),
+        ({"epochs": -1}, "epochs"),
+    ],
+)
+def test_invalid_optimizer_arguments_fail_clearly(kwargs, message):
+    x, y = _linear_data(20)
+    with pytest.raises(ValueError, match=message):
+        train(PolynomialLogisticModel(1), x, y, **kwargs)
