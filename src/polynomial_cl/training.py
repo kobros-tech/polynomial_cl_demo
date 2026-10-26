@@ -68,7 +68,7 @@ def _as_vector(lr, n):
 
 def _positive_int(value, name, *, allow_zero=False):
     if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f"{name} must be an integer")
+        raise TypeError(f"{name} must be an integer")
     minimum = 0 if allow_zero else 1
     if value < minimum:
         qualifier = "non-negative" if allow_zero else "positive"
