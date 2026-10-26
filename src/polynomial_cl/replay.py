@@ -90,6 +90,22 @@ def build_batch(
     experience (m_replay may be an int or a {exp_id: m} dict). Deterministic in (seed, step)."""
     if current.kind != "train":
         raise ValueError("current split must be a train split")
+
+    def validate_count(value, name):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(
+            value, (int, np.integer)
+        ):
+            raise ValueError(f"{name} must be a non-negative integer")
+        if value < 0:
+            raise ValueError(f"{name} must be a non-negative integer")
+
+    validate_count(m_current, "m_current")
+    if isinstance(m_replay, dict):
+        for exp_id, count in m_replay.items():
+            validate_count(count, f"m_replay[{exp_id}]")
+    else:
+        validate_count(m_replay, "m_replay")
+
     xs, ys, src, counts = [], [], [], {}
     rng = np.random.default_rng([seed, step, current.exp_id])
     x, y = _draw(current.x, current.y, m_current, rng, replace)
