@@ -60,7 +60,9 @@ def _as_vector(lr, n):
     if values.ndim == 0:
         values = np.full(n, float(values))
     elif values.shape != (n,):
-        raise ValueError(f"lr must be a scalar or have shape ({n},), got {values.shape}")
+        raise ValueError(
+            f"lr must be a scalar or have shape ({n},), got {values.shape}"
+        )
     if not np.all(np.isfinite(values)) or np.any(values < 0):
         raise ValueError("learning rates must be finite and non-negative")
     return values.copy()
@@ -120,13 +122,17 @@ def train(
             raise ValueError(f"null_basis must have shape ({n_coef}, k)")
         if not np.all(np.isfinite(null_basis)):
             raise ValueError("null_basis must contain only finite values")
-        if not np.allclose(null_basis.T @ null_basis, np.eye(null_basis.shape[1]), atol=1e-8):
+        if not np.allclose(
+            null_basis.T @ null_basis, np.eye(null_basis.shape[1]), atol=1e-8
+        ):
             raise ValueError("columns of null_basis must be orthonormal")
         # The trainer guarantees bit-for-bit preservation of frozen coefficients.
         # Therefore the projection basis must be exactly zero in those coordinates;
         # even tiny nonzero entries could otherwise move a frozen coefficient.
         if np.any(null_basis[~mask] != 0.0):
-            raise ValueError("null_basis must have exactly zero rows for frozen coefficients")
+            raise ValueError(
+                "null_basis must have exactly zero rows for frozen coefficients"
+            )
         active = mask & np.any(np.abs(null_basis) > 1e-12, axis=1)
         active_rates = raw_lr[active]
         if active_rates.size and not np.allclose(active_rates, active_rates[0]):
@@ -273,8 +279,12 @@ class StepRecord:
     old_flip_fraction: float
     ref_score_change: float | None  # max |f_after - f_before| on reference inputs
     ref_flip_fraction: float | None
-    frozen_max_change: float | None  # None when the trainable mask has no frozen coefficients
-    preserved_component_max_change: float | None  # 0 by construction for composed strategies
+    frozen_max_change: (
+        float | None
+    )  # None when the trainable mask has no frozen coefficients
+    preserved_component_max_change: (
+        float | None
+    )  # 0 by construction for composed strategies
     combined_max_coefficient_change: float
     trainable_l1_update: float
 
@@ -317,11 +327,24 @@ def run_continual(
         _positive_int(cfg.batch_size, "batch_size")
     if cfg.stop_after is not None:
         _positive_int(cfg.stop_after, "stop_after")
-    K = len(experiences) if cfg.stop_after is None else min(cfg.stop_after, len(experiences))
-    degrees = list(cfg.degrees) if cfg.degrees is not None else degree_schedule(len(experiences))
+    K = (
+        len(experiences)
+        if cfg.stop_after is None
+        else min(cfg.stop_after, len(experiences))
+    )
+    degrees = (
+        list(cfg.degrees)
+        if cfg.degrees is not None
+        else degree_schedule(len(experiences))
+    )
     if len(degrees) < K:
-        raise ValueError(f"degrees must contain at least {K} entries for the processed experiences")
-    if any(isinstance(d, bool) or not isinstance(d, (int, np.integer)) or d < 1 for d in degrees[:K]):
+        raise ValueError(
+            f"degrees must contain at least {K} entries for the processed experiences"
+        )
+    if any(
+        isinstance(d, bool) or not isinstance(d, (int, np.integer)) or d < 1
+        for d in degrees[:K]
+    ):
         raise ValueError("each processed degree must be a positive integer")
     if any(later < earlier for earlier, later in zip(degrees[:K], degrees[1:K])):
         raise ValueError("processed degrees must be non-decreasing")
@@ -417,11 +440,7 @@ def run_continual(
             )
         # A frozen-coefficient diagnostic is undefined when every coefficient is
         # trainable. Do not report 0.0 for an empty frozen set.
-        fmax = (
-            None
-            if np.all(mask)
-            else parameter_changes(expanded.w, after.w, mask)[0]
-        )
+        fmax = None if np.all(mask) else parameter_changes(expanded.w, after.w, mask)[0]
         _, l1 = parameter_changes(expanded.w, after.w, mask)
         preserved_change = 0.0 if cfg.composed else None
         combined_change = float(np.max(np.abs(after.w - expanded.w)))

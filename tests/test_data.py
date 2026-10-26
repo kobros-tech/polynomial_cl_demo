@@ -63,7 +63,6 @@ def test_boundary_is_nonlinear():
     )
 
 
-
 @pytest.mark.parametrize(
     "kwargs, error, message",
     [
@@ -78,7 +77,14 @@ def test_boundary_is_nonlinear():
     ],
 )
 def test_generate_split_rejects_invalid_arguments(kwargs, error, message):
-    args = {"exp_id": 1, "n": 10, "seed": 0, "kind": "train", "noise": 0.0, "n_experiences": 10}
+    args = {
+        "exp_id": 1,
+        "n": 10,
+        "seed": 0,
+        "kind": "train",
+        "noise": 0.0,
+        "n_experiences": 10,
+    }
     args.update(kwargs)
     with pytest.raises(error, match=message):
         generate_split(**args)

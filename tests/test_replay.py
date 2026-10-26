@@ -76,7 +76,6 @@ def test_balanced_batch_composition(exps):
     assert d.counts == {4: 10, 1: 5, 2: 0, 3: 20}
 
 
-
 @pytest.mark.parametrize(
     "m_current, m_replay, error, message",
     [
