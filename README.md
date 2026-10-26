@@ -82,9 +82,7 @@ Actual per-experience counts are stored in `record.batch_counts`. `ReplayBuffer.
 ## Metrics (per experience, identical for every strategy)
 
 current-experience accuracy; mean accuracy over observed experiences; `max |f_after - f_before|` over old test inputs; fraction of old
-test predictions that flipped; forgetting = best earlier accuracy minus current accuracy (per experience); max change of frozen coefficients
-(must be exactly 0) and L1 update of trainable coefficients; for Strategy B also the change at the reference inputs and the free dimensions
-left by the constraint.
+test predictions that flipped; forgetting = best earlier accuracy minus current accuracy (per experience); max change of frozen coefficients (reported as unavailable when no coefficients are frozen), change in the preserved old component, maximum combined-coefficient change, and L1 update of trainable coefficients; for Strategy B also the change at reference inputs and the free dimensions left by the constraint.
 
 ## Tests
 
