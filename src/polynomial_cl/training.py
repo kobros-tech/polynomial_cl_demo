@@ -95,22 +95,49 @@ def train(
     offset     fixed per-sample score added to the model score (f = offset + w.phi(x)).
     null_basis (n_coef, k) matrix; each update step is projected onto its column space.
     """
-    x = np.asarray(x, float)
-    y = np.asarray(y, float)
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if x.ndim != 2 or len(x) == 0:
+        raise ValueError("x must be a non-empty 2D array")
+    if y.shape != (len(x),) or not np.all(np.isfinite(y)):
+        raise ValueError("y must be a finite 1D array with one label per row of x")
+    if not np.all(np.isin(y, [0.0, 1.0])):
+        raise ValueError("y must contain only binary labels 0 and 1")
+    epochs = _positive_int(epochs, "epochs", allow_zero=True)
     n_coef = model.n_features
     mask = (
         np.ones(n_coef, bool)
         if trainable is None
         else np.asarray(trainable, bool).copy()
     )
-    lr_vec = _as_vector(lr, n_coef) * mask
-    off = np.zeros(len(y)) if offset is None else np.asarray(offset, float)
+    if mask.shape != (n_coef,):
+        raise ValueError(f"trainable must have shape ({n_coef},)")
+    raw_lr = _as_vector(lr, n_coef)
+    if null_basis is not None:
+        null_basis = np.asarray(null_basis, dtype=float)
+        if null_basis.ndim != 2 or null_basis.shape[0] != n_coef:
+            raise ValueError(f"null_basis must have shape ({n_coef}, k)")
+        if not np.all(np.isfinite(null_basis)):
+            raise ValueError("null_basis must contain only finite values")
+        if not np.allclose(null_basis.T @ null_basis, np.eye(null_basis.shape[1]), atol=1e-8):
+            raise ValueError("columns of null_basis must be orthonormal")
+        active = mask & np.any(np.abs(null_basis) > 1e-12, axis=1)
+        active_rates = raw_lr[active]
+        if active_rates.size and not np.allclose(active_rates, active_rates[0]):
+            raise ValueError(
+                "null_basis constraints require one shared learning rate across "
+                "all trainable coefficients represented in the null space"
+            )
+    lr_vec = raw_lr * mask
+    off = np.zeros(len(y)) if offset is None else np.asarray(offset, dtype=float)
+    if off.shape != (len(y),) or not np.all(np.isfinite(off)):
+        raise ValueError("offset must be a finite 1D array with one value per sample")
     phi = model.design(x)
     w0 = model.w.copy()
     w = w0.copy()
     rng = np.random.default_rng(seed)
     n = len(y)
-    bs = n if batch_size is None else int(batch_size)
+    bs = n if batch_size is None else _positive_int(batch_size, "batch_size")
 
     def full_loss():
         return bce_with_logits(off + phi @ w, y)
