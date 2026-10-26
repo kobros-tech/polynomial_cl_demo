@@ -122,12 +122,11 @@ def train(
             raise ValueError("null_basis must contain only finite values")
         if not np.allclose(null_basis.T @ null_basis, np.eye(null_basis.shape[1]), atol=1e-8):
             raise ValueError("columns of null_basis must be orthonormal")
-        # Projection can introduce updates in frozen coordinates unless every
-        # basis vector is zero there. Permit only numerical round-off.
-        if not np.allclose(null_basis[~mask], 0.0, atol=1e-12, rtol=0.0):
-            raise ValueError(
-                "null_basis must have zero rows for frozen coefficients (atol=1e-12)"
-            )
+        # The trainer guarantees bit-for-bit preservation of frozen coefficients.
+        # Therefore the projection basis must be exactly zero in those coordinates;
+        # even tiny nonzero entries could otherwise move a frozen coefficient.
+        if np.any(null_basis[~mask] != 0.0):
+            raise ValueError("null_basis must have exactly zero rows for frozen coefficients")
         active = mask & np.any(np.abs(null_basis) > 1e-12, axis=1)
         active_rates = raw_lr[active]
         if active_rates.size and not np.allclose(active_rates, active_rates[0]):
