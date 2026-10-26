@@ -20,10 +20,18 @@ from __future__ import annotations
 import numpy as np
 
 
-def feature_exponents(degree: int):
-    """List of (i, j) meaning x1^i * x2^j, in the canonical order."""
+def _validate_degree(degree: int) -> int:
+    """Require a non-negative integer degree; booleans are not valid degrees."""
+    if isinstance(degree, (bool, np.bool_)) or not isinstance(degree, (int, np.integer)):
+        raise ValueError("degree must be a non-negative integer")
     if degree < 0:
         raise ValueError("degree must be >= 0")
+    return int(degree)
+
+
+def feature_exponents(degree: int):
+    """List of (i, j) meaning x1^i * x2^j, in the canonical order."""
+    degree = _validate_degree(degree)
     return [(i, k - i) for k in range(degree + 1) for i in range(k, -1, -1)]
 
 
@@ -42,11 +50,13 @@ def feature_names(degree: int):
 
 
 def n_features(degree: int) -> int:
+    degree = _validate_degree(degree)
     return (degree + 1) * (degree + 2) // 2
 
 
 def polynomial_features(x, degree: int) -> np.ndarray:
     """Design matrix Phi_d(x) of shape (n, n_features(degree))."""
+    degree = _validate_degree(degree)
     x = np.atleast_2d(np.asarray(x, dtype=float))
     if x.shape[1] != 2:
         raise ValueError("expected inputs of shape (n, 2)")
@@ -60,7 +70,7 @@ class PolynomialFeatures:
     """Small convenience wrapper exposing degree, names, and feature count."""
 
     def __init__(self, degree: int):
-        self.degree = int(degree)
+        self.degree = _validate_degree(degree)
         self.exponents = feature_exponents(self.degree)
         self.names = feature_names(self.degree)
         self.n_features = len(self.names)
