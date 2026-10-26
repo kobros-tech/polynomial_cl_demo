@@ -23,9 +23,21 @@ import numpy as np
 from .data import Split
 
 
+def _validate_integer(value, name, *, minimum=0):
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+        value, (int, np.integer)
+    ):
+        raise ValueError(f"{name} must be an integer >= {minimum}")
+    if value < minimum:
+        raise ValueError(f"{name} must be an integer >= {minimum}")
+    return int(value)
+
+
 class ReplayBuffer:
     def __init__(self, capacity_per_experience: int = 100, seed: int = 0):
-        self.capacity = int(capacity_per_experience)
+        self.capacity = _validate_integer(
+            capacity_per_experience, "capacity_per_experience", minimum=1
+        )
         self.seed = seed
         self._x, self._y = {}, {}
 
@@ -54,6 +66,9 @@ class ReplayBuffer:
 
     def reference_inputs(self, n_per_experience: int):
         """First n stored inputs of every buffered experience (deterministic, inspectable)."""
+        n_per_experience = _validate_integer(
+            n_per_experience, "n_per_experience", minimum=0
+        )
         parts = [self._x[k][:n_per_experience] for k in self.experience_ids]
         return np.concatenate(parts) if parts else np.zeros((0, 2))
 
