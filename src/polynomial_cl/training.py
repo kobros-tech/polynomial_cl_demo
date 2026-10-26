@@ -267,7 +267,9 @@ class StepRecord:
     old_flip_fraction: float
     ref_score_change: float | None  # max |f_after - f_before| on reference inputs
     ref_flip_fraction: float | None
-    frozen_max_change: float
+    frozen_max_change: float | None  # None when the trainable mask has no frozen coefficients
+    preserved_component_max_change: float | None  # 0 by construction for composed strategies
+    combined_max_coefficient_change: float
     trainable_l1_update: float
 
 
@@ -404,6 +406,8 @@ def run_continual(
                 prediction_flip_fraction(sb, sa),
             )
         fmax, l1 = parameter_changes(expanded.w, after.w, mask)
+        preserved_change = 0.0 if cfg.composed else None
+        combined_change = float(np.max(np.abs(after.w - expanded.w)))
 
         records.append(
             StepRecord(
@@ -436,6 +440,8 @@ def run_continual(
                 ref_chg,
                 ref_flip,
                 fmax,
+                preserved_change,
+                combined_change,
                 l1,
             )
         )
