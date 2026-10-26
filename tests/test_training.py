@@ -207,7 +207,8 @@ def test_strategy_b_in_the_loop_respects_constraint_and_frozen_mask():
             stop_after=4,
         ),
     )
-    assert all(r.frozen_max_change == 0.0 for r in res_new.records)
+    assert res_new.records[0].frozen_max_change is None  # no old coefficients exist yet
+    assert all(r.frozen_max_change == 0.0 for r in res_new.records[1:])
 
 
 def test_strategy_a_all_equals_ordinary_training():
