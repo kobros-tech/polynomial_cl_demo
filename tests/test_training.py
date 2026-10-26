@@ -300,3 +300,11 @@ def test_invalid_optimizer_arguments_fail_clearly(kwargs, message):
     x, y = _linear_data(20)
     with pytest.raises(ValueError, match=message):
         train(PolynomialLogisticModel(1), x, y, **kwargs)
+
+
+
+def test_preservation_strategy_requires_reference_points():
+    exps = make_experiences(n_train=20, n_test=20, seed=0)
+    cfg = make_config("strategy_b_all", n_ref_per_exp=0, epochs=1)
+    with pytest.raises(ValueError, match="n_ref_per_exp must be >= 1"):
+        run_continual(exps, cfg)
