@@ -117,10 +117,30 @@ def test_insufficient_samples_policy(exps):
     assert rep.counts[1] == 50
 
 
+@pytest.mark.parametrize("capacity", [0, -1, 1.5, True])
+def test_buffer_rejects_invalid_capacity(capacity):
+    with pytest.raises(ValueError, match="capacity_per_experience"):
+        ReplayBuffer(capacity)
+
+
 def test_capacity_respected(exps):
     buf = ReplayBuffer(33)
     buf.add_experience(exps[0].train)
     assert buf.size(1) == 33
+
+
+@pytest.mark.parametrize("count", [-1, 1.5, True])
+def test_reference_inputs_rejects_invalid_count(exps, count):
+    buf = ReplayBuffer(20)
+    buf.add_experience(exps[0].train)
+    with pytest.raises(ValueError, match="n_per_experience"):
+        buf.reference_inputs(count)
+
+
+def test_reference_inputs_allows_zero(exps):
+    buf = ReplayBuffer(20)
+    buf.add_experience(exps[0].train)
+    assert buf.reference_inputs(0).shape == (0, 2)
 
 
 def test_loop_records_actual_counts_and_uses_only_past(exps):
