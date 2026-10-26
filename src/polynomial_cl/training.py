@@ -322,6 +322,8 @@ def run_continual(
         raise ValueError("processed degrees must be non-decreasing")
     if cfg.preserve and not cfg.composed:
         raise ValueError("preserve=True requires composed=True")
+    if cfg.preserve and cfg.n_ref_per_exp == 0:
+        raise ValueError("n_ref_per_exp must be >= 1 when preserve=True")
     buffer = ReplayBuffer(cfg.capacity, cfg.seed)
     acc = np.full((len(experiences), len(experiences)), np.nan)
     records, model = [], None
