@@ -44,7 +44,8 @@ def parameter_changes(w_before, w_after, trainable_mask):
     """
     d = np.abs(np.asarray(w_after) - np.asarray(w_before))
     m = np.asarray(trainable_mask, dtype=bool)
-    return (float(d[~m].max()) if (~m).any() else 0.0), float(d[m].sum())
+    frozen_max = float(d[~m].max()) if (~m).any() else None
+    return frozen_max, float(d[m].sum())
 
 
 def summary_table(result):
@@ -64,6 +65,8 @@ def summary_table(result):
                 "max_old_score_change": r.max_old_score_change,
                 "old_flip_frac": r.old_flip_fraction,
                 "frozen_max_change": r.frozen_max_change,
+                "preserved_component_max_change": r.preserved_component_max_change,
+                "combined_max_coefficient_change": r.combined_max_coefficient_change,
                 "trainable_L1_update": r.trainable_l1_update,
             }
         )
