@@ -49,7 +49,7 @@ REPORT.md       observed behaviour across the ten experiences
 ## The experiment in one paragraph
 
 Inputs live in `[-1, 1]^2`. The true rule is `y = 1 iff x2 > 0.5 sin(3 x1)` (a nonlinear boundary). Experience *k* of 10 samples `x1`
-from the *k*-th vertical strip and `x2` uniformly, so each experience reveals a different part of the boundary. Each experience has
+from the *k*-th vertical strip and `x2` uniformly, so each experience reveals a different part of the boundary. This is sequential binary learning under a spatially shifting input distribution, **not class-incremental learning** with new classes arriving over time. Each experience has
 its own **training** split and its own fixed **test** split (independent random streams; the test split does not depend on the number
 of training samples). The model is `f_d(x) = w . phi_d(x)` with the bias as the coefficient of the constant feature. Starting at degree 1,
 the degree grows by one per experience (configurable via `degrees=`). Expansion appends zero coefficients and the loop **asserts**
