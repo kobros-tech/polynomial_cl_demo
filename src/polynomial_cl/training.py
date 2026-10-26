@@ -56,8 +56,23 @@ class TrainResult:
 
 
 def _as_vector(lr, n):
-    lr = np.asarray(lr, dtype=float)
-    return np.full(n, float(lr)) if lr.ndim == 0 else lr.copy()
+    values = np.asarray(lr, dtype=float)
+    if values.ndim == 0:
+        values = np.full(n, float(values))
+    elif values.shape != (n,):
+        raise ValueError(f"lr must be a scalar or have shape ({n},), got {values.shape}")
+    if not np.all(np.isfinite(values)) or np.any(values < 0):
+        raise ValueError("learning rates must be finite and non-negative")
+    return values.copy()
+
+
+def _positive_int(value, name, *, allow_zero=False):
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise ValueError(f"{name} must be an integer")
+    minimum = 0 if allow_zero else 1
+    if value < minimum:
+        qualifier = "non-negative" if allow_zero else "positive"
+        raise ValueError(f"{name} must be {qualifier}")
 
 
 def train(
