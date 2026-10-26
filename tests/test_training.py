@@ -274,7 +274,7 @@ def test_constrained_training_rejects_unequal_active_learning_rates():
     [
         ({"scope": "new_only"}, "scope"),
         ({"degrees": [1]}, "degrees"),
-        ({"degrees": [2, 1]}, "non-decreasing"),
+        ({"degrees": [2, 1], "stop_after": 2}, "non-decreasing"),
         ({"batch_size": 0}, "batch_size"),
         ({"m_current": 0}, "m_current"),
         ({"lr": -0.1}, "lr"),
