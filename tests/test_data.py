@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import numpy as np
+import pytest
 
 from polynomial_cl.data import (
     combine_splits,
@@ -60,3 +61,35 @@ def test_boundary_is_nonlinear():
     assert (
         list(true_label(pts)) == [1, 0] and true_score(pts)[0] > 0 > true_score(pts)[1]
     )
+
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"kind": "validation"}, "kind must be 'train' or 'test'"),
+        ({"n": -1}, "n must be an integer"),
+        ({"n": 1.5}, "n must be an integer"),
+        ({"exp_id": 0}, "exp_id must be an integer"),
+        ({"exp_id": 11}, "exp_id must be <= n_experiences"),
+        ({"n_experiences": 0}, "n_experiences must be an integer"),
+        ({"noise": -0.1}, "noise must be finite"),
+        ({"noise": 1.1}, "noise must be finite"),
+    ],
+)
+def test_generate_split_rejects_invalid_arguments(kwargs, message):
+    args = {"exp_id": 1, "n": 10, "seed": 0, "kind": "train", "noise": 0.0, "n_experiences": 10}
+    args.update(kwargs)
+    with pytest.raises(ValueError, match=message):
+        generate_split(**args)
+
+
+@pytest.mark.parametrize(
+    "exp_id, n_experiences",
+    [(0, 10), (11, 10), (1, 0), (1, 1.5)],
+)
+def test_experience_window_rejects_invalid_arguments(exp_id, n_experiences):
+    from polynomial_cl.data import experience_window
+
+    with pytest.raises(ValueError):
+        experience_window(exp_id, n_experiences)
