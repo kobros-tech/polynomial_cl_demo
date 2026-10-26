@@ -37,7 +37,11 @@ def forgetting(acc_matrix, t):
 
 
 def parameter_changes(w_before, w_after, trainable_mask):
-    """(max |change| over frozen coefficients, sum |change| over trainable coefficients)."""
+    """Return max frozen-coefficient change and total trainable-coefficient L1 change.
+
+    A zero frozen maximum means there were no frozen coefficients as well as that all
+    frozen coefficients were unchanged. Callers should report the mask/count separately.
+    """
     d = np.abs(np.asarray(w_after) - np.asarray(w_before))
     m = np.asarray(trainable_mask, dtype=bool)
     return (float(d[~m].max()) if (~m).any() else 0.0), float(d[m].sum())
