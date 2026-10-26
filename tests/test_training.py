@@ -287,6 +287,25 @@ def test_null_basis_cannot_update_frozen_coefficients():
         )
 
 
+
+def test_null_basis_rejects_tiny_nonzero_entry_for_frozen_coefficient():
+    x, y = _circle_data(60)
+    basis = np.zeros((6, 1))
+    basis[0, 0] = 1e-13  # Below the former tolerance, but not exactly zero.
+    basis[1, 0] = 1.0
+    mask = np.array([False, True, True, True, True, True])
+
+    with pytest.raises(ValueError, match="exactly zero rows for frozen coefficients"):
+        train(
+            PolynomialLogisticModel(2),
+            x,
+            y,
+            epochs=1,
+            trainable=mask,
+            null_basis=basis,
+        )
+
+
 @pytest.mark.parametrize(
     "kwargs, message",
     [
