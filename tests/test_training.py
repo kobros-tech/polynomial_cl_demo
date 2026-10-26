@@ -269,6 +269,24 @@ def test_constrained_training_rejects_unequal_active_learning_rates():
         train(PolynomialLogisticModel(2), x, y, lr=lr, epochs=1, null_basis=basis)
 
 
+def test_null_basis_cannot_update_frozen_coefficients():
+    x, y = _circle_data(60)
+    basis = np.zeros((6, 1))
+    basis[0, 0] = 1.0 / np.sqrt(2.0)
+    basis[1, 0] = 1.0 / np.sqrt(2.0)
+    mask = np.array([False, True, True, True, True, True])
+
+    with pytest.raises(ValueError, match="zero rows for frozen coefficients"):
+        train(
+            PolynomialLogisticModel(2),
+            x,
+            y,
+            epochs=1,
+            trainable=mask,
+            null_basis=basis,
+        )
+
+
 @pytest.mark.parametrize(
     "kwargs, message",
     [
