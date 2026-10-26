@@ -292,16 +292,29 @@ def run_continual(
     """Process experiences one at a time. Only the current train split, the replay buffer
     and the current parameters are used for learning; test splits are used for evaluation
     only, and future experiences are never touched."""
-    K = (
-        len(experiences)
-        if cfg.stop_after is None
-        else min(cfg.stop_after, len(experiences))
-    )
-    degrees = (
-        list(cfg.degrees)
-        if cfg.degrees is not None
-        else degree_schedule(len(experiences))
-    )
+    if not experiences:
+        raise ValueError("experiences must not be empty")
+    if cfg.scope not in {"all", "new"}:
+        raise ValueError("scope must be 'all' or 'new'")
+    if not np.isfinite(cfg.lr) or cfg.lr < 0:
+        raise ValueError("lr must be finite and non-negative")
+    if not np.isfinite(cfg.lr_old_factor) or cfg.lr_old_factor < 0:
+        raise ValueError("lr_old_factor must be finite and non-negative")
+    _positive_int(cfg.epochs, "epochs", allow_zero=True)
+    _positive_int(cfg.capacity, "capacity")
+    _positive_int(cfg.m_current, "m_current")
+    _positive_int(cfg.m_replay, "m_replay", allow_zero=True)
+    _positive_int(cfg.n_ref_per_exp, "n_ref_per_exp", allow_zero=True)
+    if cfg.batch_size is not None:
+        _positive_int(cfg.batch_size, "batch_size")
+    if cfg.stop_after is not None:
+        _positive_int(cfg.stop_after, "stop_after")
+    K = len(experiences) if cfg.stop_after is None else min(cfg.stop_after, len(experiences))
+    degrees = list(cfg.degrees) if cfg.degrees is not None else degree_schedule(len(experiences))
+    if len(degrees) < K:
+        raise ValueError(f"degrees must contain at least {K} entries for the processed experiences")
+    if any(isinstance(d, bool) or not isinstance(d, (int, np.integer)) or d < 1 for d in degrees[:K]):
+        raise ValueError("each processed degree must be a positive integer")
     if cfg.preserve and not cfg.composed:
         raise ValueError("preserve=True requires composed=True")
     buffer = ReplayBuffer(cfg.capacity, cfg.seed)
