@@ -224,8 +224,8 @@ def test_strategy_b_in_the_loop_respects_constraint_and_frozen_mask():
     assert all(r.frozen_max_change == 0.0 for r in res_new.records[1:])
 
 
-def test_strategy_a_all_equals_ordinary_training():
-    """Documented fact: an unconstrained g over all coefficients is ordinary training."""
+def test_unconstrained_composed_all_equals_ordinary_training():
+    """An unconstrained composed model over all coefficients equals ordinary training."""
     exps = make_experiences(n_train=60, n_test=80, seed=1)
     kw = {
         "epochs": 40,
@@ -235,7 +235,11 @@ def test_strategy_a_all_equals_ordinary_training():
         "stop_after": 4,
     }
     a = run_continual(exps, make_config("ordinary", **kw)).records[-1].w_after
-    b = run_continual(exps, make_config("strategy_a_all", **kw)).records[-1].w_after
+    b = (
+        run_continual(exps, make_config("ordinary", composed=True, scope="all", **kw))
+        .records[-1]
+        .w_after
+    )
     np.testing.assert_allclose(a, b, atol=1e-10)
 
 

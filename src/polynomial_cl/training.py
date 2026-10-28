@@ -228,8 +228,6 @@ STRATEGIES = {
     "ordinary": {},
     "frozen_old": {"freeze_old": True},
     "small_old_lr": {"lr_old_factor": 0.1},
-    "strategy_a_all": {"composed": True, "scope": "all"},
-    "strategy_a_new": {"composed": True, "scope": "new"},
     "strategy_b_all": {"composed": True, "preserve": True, "scope": "all"},
     "strategy_b_new": {"composed": True, "preserve": True, "scope": "new"},
 }
