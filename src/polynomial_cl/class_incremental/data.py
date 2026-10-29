@@ -83,3 +83,21 @@ def load_projected_mnist(root, projection_seed=0, download=True):
         project_images(test_x, projection),
         test_y,
     )
+
+
+def holdout_split(train_x, train_y, fraction, seed=123):
+    """Random split of the training data into (train, validation) arrays.
+
+    Use the validation part, never the test set, to choose hyper-parameters.
+    """
+    if not 0 < fraction < 1:
+        raise ValueError("fraction must be between 0 and 1")
+    order = np.random.default_rng(seed).permutation(len(train_x))
+    cut = len(train_x) - round(fraction * len(train_x))
+    fit, held = order[:cut], order[cut:]
+    for part, name in ((fit, "training"), (held, "validation")):
+        if len(np.unique(train_y[part])) != len(np.unique(train_y)):
+            raise ValueError(
+                f"the {name} part is missing a class; use more data or another fraction"
+            )
+    return train_x[fit], train_y[fit], train_x[held], train_y[held]

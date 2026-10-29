@@ -29,6 +29,7 @@ def fit_task(
     eligible_classes: np.ndarray | None = None,
     update_scale: np.ndarray | None = None,
     null_basis: np.ndarray | None = None,
+    feature_scale: np.ndarray | None = None,
 ) -> np.ndarray:
     """Train a softmax head on the current task's examples plus replay examples.
 
@@ -41,7 +42,11 @@ def fit_task(
     ``update_scale`` (n_features, n_classes) multiplies the gradient elementwise (0 freezes a
     coefficient, 0.1 slows it); ``null_basis`` (n_features, k) projects every gradient column
     onto its span; if the basis spans the null space of a design matrix, the logits of those
-    design rows are unchanged by every update.
+    design rows are unchanged by every update. ``feature_scale`` (n_features,) gives each
+    feature its own step size (diagonal preconditioner D): the step is D g. Combined with
+    ``null_basis`` it is D^(1/2) N N^T D^(1/2) g, so ``null_basis`` must then span the null
+    space of the design scaled by D^(1/2); this stays a descent direction and keeps the
+    constraint exactly.
     """
     if features.ndim != 2 or len(features) == 0:
         raise ValueError("features must be a non-empty 2D array")
@@ -68,6 +73,13 @@ def fit_task(
         raise ValueError("update_scale must have the same shape as weights")
     if null_basis is not None and null_basis.shape[0] != weights.shape[0]:
         raise ValueError("null_basis must have one row per feature")
+    if feature_scale is not None:
+        feature_scale = np.asarray(feature_scale, dtype=weights.dtype)
+        if feature_scale.shape != (weights.shape[0],) or not np.all(feature_scale > 0):
+            raise ValueError(
+                "feature_scale must be positive with one entry per feature"
+            )
+        scale_root = np.sqrt(feature_scale)[:, None]
     if eligible_classes is None:
         eligible_classes = np.arange(weights.shape[1], dtype=np.int64)
     else:
@@ -95,8 +107,15 @@ def fit_task(
             gradient = xb.T @ probabilities / len(yb)
             if update_scale is not None:
                 gradient = gradient * update_scale[:, eligible_classes]
-            if null_basis is not None:
-                gradient = null_basis @ (null_basis.T @ gradient)
+            if feature_scale is None:
+                if null_basis is not None:
+                    gradient = null_basis @ (null_basis.T @ gradient)
+            elif null_basis is None:
+                gradient = gradient * feature_scale[:, None]
+            else:
+                gradient = scale_root * (
+                    null_basis @ (null_basis.T @ (scale_root * gradient))
+                )
             weights[:, eligible_classes] -= learning_rate * gradient
     return weights
 

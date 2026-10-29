@@ -194,6 +194,7 @@ def run_condition(
     batch_size=BATCH_SIZE,
     strategy="ordinary",
     n_ref_per_class=N_REF_PER_CLASS,
+    feature_power=0.0,
 ):
     """Run one condition; returns a JSON-serialisable record with the accuracy matrix.
 
@@ -201,6 +202,10 @@ def run_condition(
     replay. Besides accuracy, every record carries indicators of whether the model is learning
     (loss before/after, size of the update, trainable coefficients) and how much the old
     function moved (change of old-class logits on old-class test inputs).
+
+    ``feature_power`` p > 0 gives every feature its own step size
+    ``learning_rate * (max_rms / rms_i) ** p`` (rms of feature i on the experience's training
+    set): p = 0 is one shared rate, p = 1 diagonal preconditioning.
     """
     if condition not in CONDITIONS:
         raise ValueError(f"unknown condition: {condition}")
@@ -237,6 +242,18 @@ def run_condition(
             replay = np.concatenate([memory_indices[c] for c in range(old_classes)])
         else:
             replay = np.empty(0, dtype=np.int64)
+        train_x = np.concatenate(
+            [data.train_x[indices, :count], data.train_x[replay, :count]]
+        )
+        train_y = data.train_y[np.concatenate([indices, replay])].astype(
+            np.int64, copy=False
+        )
+        feature_scale = None
+        if feature_power:
+            rms = np.sqrt(np.mean(train_x.astype(np.float64) ** 2, axis=0))
+            feature_scale = (
+                (rms.max() / np.maximum(rms, 1e-12)) ** feature_power
+            ).astype(np.float32)
         scale = null_basis = refs = None
         if strategy in ("frozen_old", "small_old_lr"):
             scale = np.ones(weights.shape, np.float32)
@@ -247,14 +264,10 @@ def run_condition(
             refs = np.concatenate(
                 [memory_indices[c][:n_ref_per_class] for c in range(old_classes)]
             )
-            null_basis = null_space_basis(data.train_x[refs, :count])
-
-        train_x = np.concatenate(
-            [data.train_x[indices, :count], data.train_x[replay, :count]]
-        )
-        train_y = data.train_y[np.concatenate([indices, replay])].astype(
-            np.int64, copy=False
-        )
+            ref_design = data.train_x[refs, :count]
+            if feature_scale is not None:
+                ref_design = ref_design * np.sqrt(feature_scale)
+            null_basis = null_space_basis(ref_design)
         old_test = np.flatnonzero(data.test_y < old_classes)
         before = weights.copy()
         loss_before = cross_entropy(weights, train_x, train_y, n_seen)
@@ -271,6 +284,7 @@ def run_condition(
             eligible_classes=np.arange(n_seen),
             update_scale=scale,
             null_basis=null_basis,
+            feature_scale=feature_scale,
         )
         _record_indicators(
             indicators, weights, before, data, count, task, old_test, refs, scale, null_basis,
@@ -328,6 +342,7 @@ def run_comparison(
     learning_rate=LEARNING_RATE,
     batch_size=BATCH_SIZE,
     memory_per_class=MEMORY_PER_CLASS,
+    feature_power=0.0,
 ):
     """Run all three conditions for every seed; within a seed they share task order and replay.
 
@@ -349,6 +364,7 @@ def run_comparison(
                     epochs=epochs,
                     learning_rate=learning_rate,
                     batch_size=batch_size,
+                    feature_power=feature_power,
                 )
             )
     return {"runs": runs, "summary": summarize_runs(runs)}
@@ -364,6 +380,7 @@ def run_strategy_comparison(
     batch_size=BATCH_SIZE,
     memory_per_class=MEMORY_PER_CLASS,
     n_ref_per_class=N_REF_PER_CLASS,
+    feature_power=0.0,
 ):
     """Compare update rules on the ``expanding`` schedule; same task order and replay per seed."""
     if not len(seeds):
@@ -376,7 +393,7 @@ def run_strategy_comparison(
                 run_condition(
                     "expanding", data, tasks, memory, seed=seed, epochs=epochs,
                     learning_rate=learning_rate, batch_size=batch_size,
-                    strategy=strategy, n_ref_per_class=n_ref_per_class,
+                    strategy=strategy, n_ref_per_class=n_ref_per_class, feature_power=feature_power,
                 )
             )  # fmt: skip
     return {

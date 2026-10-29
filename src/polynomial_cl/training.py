@@ -202,6 +202,10 @@ class ContinualConfig:
     degrees: Sequence[int] | None = None  # per experience; default 1,2,...,K
     lr: float = 0.5
     lr_old_factor: float = 1.0  # old coefficients use lr * factor
+    # Per-coefficient conditioning: rate_i = lr * (max_j rms_j / rms_i) ** lr_feature_power, with rms
+    # the root-mean-square of feature i on the training batch. 0 = one shared rate; 1 = diagonal
+    # (Jacobi) preconditioning, which gives small high-degree features larger steps.
+    lr_feature_power: float = 0.0
     freeze_old: bool = False  # old coefficients get mask False
     epochs: int = 300
     batch_size: int | None = None
@@ -316,6 +320,12 @@ def run_continual(
         raise ValueError("lr must be finite and non-negative")
     if not np.isfinite(cfg.lr_old_factor) or cfg.lr_old_factor < 0:
         raise ValueError("lr_old_factor must be finite and non-negative")
+    if not np.isfinite(cfg.lr_feature_power) or cfg.lr_feature_power < 0:
+        raise ValueError("lr_feature_power must be finite and non-negative")
+    if cfg.lr_feature_power and cfg.preserve:
+        raise ValueError(
+            "lr_feature_power needs one shared rate; incompatible with preserve"
+        )
     _positive_int(cfg.epochs, "epochs", allow_zero=True)
     _positive_int(cfg.capacity, "capacity")
     _positive_int(cfg.m_current, "m_current")
@@ -377,7 +387,10 @@ def run_continual(
         )
         n_new_total = expanded.n_features
         mask = np.ones(n_new_total, bool)
-        lr_vec = np.full(n_new_total, cfg.lr)
+        lr_vec = np.full(n_new_total, cfg.lr, dtype=float)
+        if cfg.lr_feature_power:
+            rms = np.sqrt(np.mean(expanded.design(batch.x) ** 2, axis=0))
+            lr_vec *= (rms.max() / np.maximum(rms, 1e-12)) ** cfg.lr_feature_power
         if cfg.freeze_old:
             mask[:n_old] = False
         if cfg.composed:

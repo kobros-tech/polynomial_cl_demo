@@ -8,6 +8,7 @@ from polynomial_cl.class_incremental import (
     CONDITIONS,
     STRATEGIES,
     TASK_ORDER,
+    holdout_split,
     make_feature_data,
     make_synthetic_2d,
     make_task_plan,
@@ -25,7 +26,11 @@ from polynomial_cl.class_incremental.features import (
     n_polynomial_features,
     scaled_polynomial_features,
 )
-from polynomial_cl.class_incremental.training import fit_task, null_space_basis
+from polynomial_cl.class_incremental.training import (
+    cross_entropy,
+    fit_task,
+    null_space_basis,
+)
 
 
 # ---------------------------------------------------------------- data
@@ -438,3 +443,81 @@ def test_strategy_comparison_pairs_strategies_within_a_seed(tiny_data):
     assert "mean_old_flip_fraction" in result["summary"]["strategy_b"]
     with pytest.raises(ValueError, match="seed"):
         run_strategy_comparison(tiny_data, [], **kwargs)
+
+
+# ------------------------------------------------- per-feature step sizes
+def test_holdout_split_is_deterministic_disjoint_and_validates():
+    x = np.arange(200).reshape(-1, 1).astype(np.float32)
+    y = np.repeat(np.arange(10), 20)
+    a = holdout_split(x, y, 0.25, seed=3)
+    b = holdout_split(x, y, 0.25, seed=3)
+    for left, right in zip(a, b):
+        np.testing.assert_array_equal(left, right)
+    fit_x, fit_y, held_x, held_y = a
+    assert (
+        len(fit_x) == 150
+        and len(held_x) == 50
+        and len(fit_y) == 150
+        and len(held_y) == 50
+    )
+    assert not set(fit_x.ravel()) & set(held_x.ravel())
+    for fraction in (0.0, 1.0):
+        with pytest.raises(ValueError, match="fraction"):
+            holdout_split(x, y, fraction)
+    with pytest.raises(ValueError, match="missing a class"):
+        holdout_split(x[:12], np.arange(12) % 10, 0.1)
+
+
+def test_feature_scale_of_ones_changes_nothing_and_other_scales_do():
+    x, y = _toy_problem()
+    start = np.random.default_rng(6).normal(size=(4, 10)).astype(np.float32)
+    plain = _fit(start.copy(), x, y, [0, 1])
+    ones = _fit(start.copy(), x, y, [0, 1], feature_scale=np.ones(4, np.float32))
+    np.testing.assert_allclose(ones, plain, atol=1e-6)
+    scaled = _fit(
+        start.copy(), x, y, [0, 1], feature_scale=np.array([1, 1, 1, 8], np.float32)
+    )
+    assert np.abs(scaled[3] - start[3]).sum() > np.abs(plain[3] - start[3]).sum()
+    with pytest.raises(ValueError, match="feature_scale"):
+        _fit(
+            start.copy(), x, y, [0, 1], feature_scale=np.array([1, 1, 1, 0], np.float32)
+        )
+
+
+def test_preconditioned_null_projection_keeps_constraint_and_descends():
+    x, y = _toy_problem()
+    scale = np.array([1.0, 4.0, 9.0, 16.0], dtype=np.float32)
+    refs = x[:2]
+    basis = null_space_basis(refs * np.sqrt(scale))
+    start = np.random.default_rng(7).normal(size=(4, 10)).astype(np.float32)
+    trained = _fit(
+        start.copy(), x, y, [0, 1], null_basis=basis, feature_scale=scale, epochs=5
+    )
+    np.testing.assert_allclose(refs @ trained[:, :2], refs @ start[:, :2], atol=1e-4)
+    before = cross_entropy(start, x, y, 2)
+    assert cross_entropy(trained, x, y, 2) < before
+
+
+def test_feature_power_runs_for_every_strategy_and_zero_is_the_default(tiny_data):
+    tasks, memory = make_task_plan(tiny_data.train_y, 2, 2)
+    kwargs = {"seed": 2, "epochs": 1, "learning_rate": 0.05, "batch_size": 8}
+    default = run_condition("expanding", tiny_data, tasks, memory, **kwargs)
+    assert default == run_condition(
+        "expanding", tiny_data, tasks, memory, feature_power=0.0, **kwargs
+    )
+    for strategy in STRATEGIES:
+        run = run_condition(
+            "expanding", tiny_data, tasks, memory, strategy=strategy, feature_power=1.0,
+            n_ref_per_class=1, **kwargs,
+        )  # fmt: skip
+        assert (
+            run["accuracy_matrix"] != default["accuracy_matrix"]
+            or strategy == "strategy_b"
+        )
+        assert np.isfinite(run["final_mean_accuracy"]) and np.isfinite(
+            run["mean_loss_reduction"]
+        )
+        if strategy == "strategy_b":
+            assert (
+                max(c for c in run["ref_logit_change_by_task"] if c is not None) <= 1e-4
+            )

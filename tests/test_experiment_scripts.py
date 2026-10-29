@@ -76,3 +76,29 @@ def test_class_incremental_script_strategies_mode(tmp_path):
     assert set(result["summary"]) == {
         "ordinary", "ordinary_no_replay", "small_old_lr", "frozen_old", "strategy_b"
     }  # fmt: skip
+
+
+def test_rate_selection_script_selects_on_validation_and_reports_test(tmp_path):
+    out = tmp_path / "selection.json"
+    run_script(
+        "rate_selection.py", "--dataset", "synthetic_2d", "--powers", 0, 1, "--lrs", 0.05, 0.2,
+        "--select-seeds", 0, "--test-seeds", 0, 1, "--epochs", 1, "--memory-per-class", 2,
+        "--train-per-class", 60, "--test-per-class", 8, "--output", out,
+    )  # fmt: skip
+    result = json.loads(out.read_text())
+    assert len(result["validation_grid"]) == 4
+    assert {row["name"] for row in result["selected"]} == {
+        "fixed_linear",
+        "expanding",
+        "fixed_capacity",
+    }
+    for row in result["selected"]:
+        cell = (row["feature_power"], row["learning_rate"])
+        best = max(
+            g["final_mean_accuracy"][row["name"]] for g in result["validation_grid"]
+        )
+        assert row["validation_accuracy"] == best  # chosen by validation accuracy only
+        assert (cell[0], cell[1]) in {
+            (g["feature_power"], g["learning_rate"]) for g in result["validation_grid"]
+        }
+        assert 0 <= row["final_mean_accuracy"]["mean"] <= 1

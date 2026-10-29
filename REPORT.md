@@ -64,7 +64,7 @@ Produced by `experiments/synthetic_degree_ablation.py` and `experiments/class_in
 * **Ring: no capacity effect.** The 3-epoch gap (0.709 vs 0.909) disappears with training (0.906 / 0.910 / 0.908 at 30 epochs), as expected for a linearly solvable task: it reflects how fast each model learns a new class from zero-initialised weights in a fixed number of steps.
 * **Split MNIST: expansion helps, gradual growth does not matter.** The ordering `fixed_linear` < `expanding` ~ `fixed_capacity` holds from 1 to 30 epochs, but every number is far from converged, forgetting is severe in all conditions (mostly because 200 replay examples per old class compete with about 12,000 fresh examples per new experience), and absolute values depend strongly on the epoch budget. Only five seeds that share one projection and one training set were run.
 
-## 7. Strategy questions, checked on the binary task and on Split MNIST
+## 7. Strategy questions at default shared rates (superseded in part by section 8)
 
 Five seeds, 3 epochs for Split MNIST (`--experiment strategies`), 300 epochs for the binary task; mean over seeds. `old_flip` is the fraction of old-class (binary: old-experience) test inputs whose prediction changed during the latest experience.
 
@@ -88,7 +88,38 @@ Strategy B versus the number of reference inputs (Split MNIST: per old class; bi
 * **Why Strategy B fits the sine curve badly.** Not optimisation: 10x the epochs gives 0.839 +/- 0.031 versus 0.840. It is the constraint: pinning `g` at 3 points per old experience leaves `null_dim` growing (3 -> 39) but almost none of it usable in the current strip (`loss_reduction` is ~8e-3 at experiences 2-3 and never exceeds 4e-3 afterwards, 1e-4 at experience 4). Accuracy falls monotonically with the number of references (0.965 ordinary, 0.912, 0.848, 0.840), and at 5 references the old function is preserved almost exactly (change 0.014) at the same accuracy as `frozen_old` (0.842), which moves the old function far more (0.707). `strategy_b_new` has `null_dim = 0` from experience 2 on: zero loss reduction and zero update, i.e. it does not learn after experience 1.
 * **Learning indicators.** `null_dim` is only defined for Strategy B (it is `None`/`n/a` elsewhere, not "not learning"). For every rule use `loss_reduction`, `trainable_l1_update` / `n_trainable`, current-experience accuracy and the old-function change columns, in notebook 02 and in the class-incremental records.
 * **Expansion versus no expansion is not a bug.** Degree 1 throughout is clearly worse on the binary task (0.910 vs 0.965) and on Split MNIST (0.176 vs 0.246). Growing 1..10 versus fixed degree 10 differ early (after experience 1: 0.959 vs 0.988, the fixed model is better) and converge by experiences 8-10, because zero-initialised expansion preserves the function and replay covers all experiences: once every coefficient exists the end state is set by the data, not the growth path.
-* **The preferred rule depends on the problem.** On the binary regression-like task `ordinary` is best and every stability mechanism costs accuracy. On class-incremental Split MNIST the opposite holds: forgetting is dominated by new-class logits taking over old-class regions (200 replay examples per old class against ~12,000 fresh ones), and a few reference constraints roughly halve forgetting (Strategy B, 3 refs: 0.405 vs 0.858) while costing current-experience accuracy (0.683 vs 0.902). Strategy B is a stability-plasticity dial: with all stored examples as references the null space is empty and nothing is learned.
+* **Split MNIST at default rates (3 epochs, lr 0.1) favoured Strategy B** (0.538 vs 0.246), but section 8 shows this was an under-training artifact: with tuned rates the gap vanishes. Strategy B remains a stability-plasticity dial (more references -> less forgetting, less learning; none left to learn when every stored example is a reference).
 
-**Limits of the Split MNIST evidence.** Nothing is trained to convergence: Strategy B's lead over `ordinary` narrows with more epochs (3 epochs 0.538 vs 0.245; 10: 0.561 vs 0.367; 30: 0.586 vs 0.479, 3 seeds) and `frozen_old` falls behind `ordinary` from 10 epochs on. The reference-count sweep was read off test accuracy, so its best value (about 10 per class) must not be reported as tuned; selecting it needs a held-out validation split. Seeds share one projection and one training set. Simple alternatives that target the recency bias directly (class-balanced replay sampling, logit bias correction) were not run, so Strategy B has not been shown to beat them.
+## 8. Per-feature learning rates change the conclusions
 
+Rate of feature i = `lr * (max_rms / rms_i) ** p` (rms on the experience's training set; `p = 0` is one shared rate, `p = 1` diagonal preconditioning). Implemented as `lr_feature_power` (binary) and `feature_power` (class-incremental). A latent crash for integer `lr` combined with fractional factors was fixed on the way.
+
+**Binary task (five seeds, 300 epochs).** The shared rate is far from converged (ordinary: 0.967 at 300, 0.979 at 1,000, 0.991 at 10,000 epochs). With `p = 1, lr = 4` ordinary reaches 0.992 in 300 epochs with forgetting 0.0017 (vs 0.0080).
+
+| rule | shared rate (p=0, lr=0.5) | per-feature (p=1, lr=4) |
+| --- | --- | --- |
+| degree 1 throughout (no expansion) | 0.910 | 0.910 |
+| grow 1..10 | 0.965 | 0.992 |
+| fixed degree 10 | 0.970 | 0.991 |
+| `ordinary_no_replay` | 0.866 | 0.892 |
+| `small_old_lr` (old factor 0.3 / 0.1) | 0.940 / 0.916 | 0.987 / 0.977 |
+| `frozen_old` | 0.842 | 0.826 |
+
+**Split MNIST (3 epochs).** For each condition or rule, `(p, lr)` was selected on a 10% validation split of the training data (grid p in {0,1,2,3}, lr in {0.01..1}, seeds 0-1), then evaluated on the test set (seeds 0-4); `experiments/rate_selection.py` reproduces this. Validation and test agree (e.g. 0.630 vs 0.644 for `expanding`).
+
+| condition / rule | default rates | selected (p, lr) | test accuracy | forgetting |
+| --- | --- | --- | --- | --- |
+| `fixed_linear` | 0.176 | 3, 0.3 | 0.442 +/- 0.024 | 0.586 |
+| `expanding` (= `ordinary`) | 0.246 | 3, 0.01 | 0.644 +/- 0.013 | 0.374 |
+| `fixed_capacity` | 0.256 | 3, 0.01 | 0.645 +/- 0.011 | 0.377 |
+| Strategy B, 3 refs | 0.538 | 2, 0.3 | 0.650 +/- 0.013 | 0.369 |
+| `small_old_lr` | 0.260 | 2, 1 | 0.635 +/- 0.040 | 0.370 |
+| `frozen_old` | 0.274 | 3, 0.01 | 0.578 +/- 0.014 | 0.453 |
+| `ordinary_no_replay` | 0.192 | 1, 0.01 | 0.212 | 0.899 |
+
+* **Expansion helps, gradual growth does not matter.** Without expansion the model is capacity-limited, not rate-limited: 0.910 on the binary task and 0.442 on Split MNIST even with tuned rates, versus 0.99 and 0.644 with expansion. `expanding` and `fixed_capacity` are tied in accuracy on both tasks; growing has lower forgetting on the binary task (0.0017 vs 0.0043) and none on Split MNIST.
+* **Strategy B has no demonstrated advantage.** With rates tuned for each rule, B (0.650) and `ordinary` (0.644) differ by less than one standard deviation. The earlier B advantage (0.538 vs 0.246) came from comparing against an under-trained shared-rate baseline. On the binary task B is worse (0.840 vs 0.965 at shared rates; more epochs do not help).
+* **`frozen_old` is worse** on both tasks even when tuned (binary 0.826, Split MNIST 0.578). `small_old_lr` matches `ordinary` but with more seed variance and its selected rate sits at the upper edge of the grid. Replay is the dominant ingredient (0.212 without it).
+* **Decision.** Keep `ordinary` with per-feature rates as the default. Do not refine Strategy B for accuracy; keep it only as a controllable preservation diagnostic. Treat the earlier shared-rate tables (sections 6-7) as optimiser-limited.
+
+**Limits.** Split MNIST is still 3 epochs and one dataset with one random projection (seeds change shuffling and replay only); the selected settings are close to others on the grid (e.g. `expanding` 0.630 at p=3, lr 0.01 vs 0.625 at p=2, lr 0.1); B was selected with 3 references only; Strategy B with per-feature rates was not tested on the binary task (that trainer requires one shared rate), where 10x more epochs left it unchanged.

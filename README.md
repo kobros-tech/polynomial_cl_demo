@@ -127,7 +127,14 @@ python experiments/class_incremental.py --dataset split_mnist --experiment strat
 
 The rules have the same meaning as in the binary experiments, applied to the softmax head. A coefficient is *old* if its feature row existed before the current experience **and** its class column was already introduced; new feature rows and the new classes' columns always train. `small_old_lr` multiplies the old coefficients' gradient by 0.1, `frozen_old` by 0; Strategy B projects every gradient onto the null space of the design matrix at `--n-ref-per-class` stored inputs per old class (default 3), so the logits at those inputs cannot change. Every record carries learning indicators that exist for *all* rules: training loss before/after each experience, L1 size of the update, number of trainable coefficients, and how far old-class logits and predictions moved on old-class test inputs (`null_dim` exists only for Strategy B). Notebook 03 shows them and sweeps the number of reference inputs.
 
+**4. Per-feature learning rates and rate selection.** `--feature-power p` (class-incremental CLI) and `lr_feature_power` (binary config) give feature i the step size `lr * (max_rms / rms_i) ** p`. `--validation-fraction 0.1` evaluates on a held-out part of the training data instead of the test set, and `experiments/rate_selection.py` sweeps `(p, lr)` on that split, picks the best cell for each condition (or rule, with `--experiment strategies`) by validation accuracy only, and then reports the test result:
+
+```bash
+python -u experiments/rate_selection.py --dataset split_mnist --output results/rate_selection_conditions.json   # a few minutes
+python -u experiments/rate_selection.py --dataset split_mnist --experiment strategies --output results/rate_selection_strategies.json
+```
+
 Read these results with two caveats (numbers in [`REPORT.md`](REPORT.md) section 6):
 
-* **Training budget.** The defaults (3 epochs, learning rate 0.1) are far from convergence. Always repeat with several `--epochs` values: conclusions that change with the budget are about optimisation speed, not capacity.
+* **Training budget and learning rates.** The defaults (3 epochs, one shared rate 0.1) are far from convergence, and conclusions drawn at them were reversed once rates were tuned (see REPORT section 8). Compare conditions only at rates selected per condition on validation data, and repeat with several `--epochs` values.
 * **The ring is linearly solvable.** Equal isotropic Gaussian classes have linear Bayes boundaries, so this dataset cannot reward extra capacity. It checks the machinery; the binary sinusoid task and Split MNIST are the capacity tests. Also, with the default 160 training samples per class the replay memory (200 per class) holds *all* earlier data on the ring, whereas it is a genuine 200-example budget on MNIST.

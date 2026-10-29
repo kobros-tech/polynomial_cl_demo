@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 from polynomial_cl.class_incremental import (
+    holdout_split,
     load_projected_mnist,
     make_feature_data,
     make_synthetic_2d,
@@ -31,24 +32,8 @@ from polynomial_cl.class_incremental.experiment import (
 )
 
 
-def main():
-    p = argparse.ArgumentParser(description=__doc__)
+def add_dataset_arguments(p):
     p.add_argument("--dataset", choices=("synthetic_2d", "split_mnist"), required=True)
-    p.add_argument(
-        "--experiment",
-        choices=("conditions", "strategies"),
-        default="conditions",
-        help="conditions: fixed_linear/expanding/fixed_capacity; strategies: update rules on 'expanding'",
-    )
-    p.add_argument(
-        "--n-ref-per-class", type=int, default=N_REF_PER_CLASS, help="strategy_b only"
-    )
-    p.add_argument("--output", type=Path, required=True)
-    p.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2, 3, 4])
-    p.add_argument("--epochs", type=int, default=EPOCHS)
-    p.add_argument("--lr", type=float, default=LEARNING_RATE)
-    p.add_argument("--batch-size", type=int, default=BATCH_SIZE)
-    p.add_argument("--memory-per-class", type=int, default=MEMORY_PER_CLASS)
     mnist = p.add_argument_group("split_mnist")
     mnist.add_argument("--data-dir", default="data/mnist")
     mnist.add_argument("--projection-seed", type=int, default=0)
@@ -64,12 +49,10 @@ def main():
     synthetic.add_argument("--test-per-class", type=int, default=240)
     synthetic.add_argument("--separation", type=float, default=2.5)
     synthetic.add_argument("--noise", type=float, default=0.45)
-    args = p.parse_args()
-    if not args.seeds:
-        p.error("at least one seed is required")
-    if min(args.epochs, args.batch_size, args.memory_per_class) < 1:
-        p.error("epochs, batch-size and memory-per-class must be positive")
 
+
+def load_dataset(args):
+    """Arrays (train_x, train_y, test_x, test_y) plus a JSON-able description of the data."""
     if args.dataset == "synthetic_2d":
         train_x, train_y, test_x, test_y, means = make_synthetic_2d(
             args.data_seed,
@@ -78,7 +61,7 @@ def main():
             args.separation,
             args.noise,
         )
-        data_settings = {
+        settings = {
             "data_seed": args.data_seed,
             "train_per_class": args.train_per_class,
             "test_per_class": args.test_per_class,
@@ -90,17 +73,63 @@ def main():
         train_x, train_y, test_x, test_y = load_projected_mnist(
             args.data_dir, args.projection_seed, download=args.download
         )
-        data_settings = {
+        settings = {
             "projection_seed": args.projection_seed,
             "projection_dimensions": N_COMPONENTS,
             "projection": "fixed orthonormal random projection; no data fitting",
         }
+    return train_x, train_y, test_x, test_y, settings
 
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    add_dataset_arguments(p)
+    p.add_argument(
+        "--experiment",
+        choices=("conditions", "strategies"),
+        default="conditions",
+        help="conditions: fixed_linear/expanding/fixed_capacity; strategies: update rules on 'expanding'",
+    )
+    p.add_argument(
+        "--n-ref-per-class", type=int, default=N_REF_PER_CLASS, help="strategy_b only"
+    )
+    p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2, 3, 4])
+    p.add_argument("--epochs", type=int, default=EPOCHS)
+    p.add_argument("--lr", type=float, default=LEARNING_RATE)
+    p.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    p.add_argument("--memory-per-class", type=int, default=MEMORY_PER_CLASS)
+    p.add_argument(
+        "--feature-power",
+        type=float,
+        default=0.0,
+        help="per-feature step sizes lr*(max_rms/rms_i)**power; 0 = one shared rate",
+    )
+    p.add_argument(
+        "--validation-fraction",
+        type=float,
+        default=0.0,
+        help="hold out this fraction of the training set and evaluate on it, not on the test set",
+    )
+    args = p.parse_args()
+    if not args.seeds:
+        p.error("at least one seed is required")
+    if min(args.epochs, args.batch_size, args.memory_per_class) < 1:
+        p.error("epochs, batch-size and memory-per-class must be positive")
+
+    train_x, train_y, test_x, test_y, data_settings = load_dataset(args)
+    if args.validation_fraction:
+        # Train on part of the training set and report on the held-out part (test set unused).
+        train_x, train_y, test_x, test_y = holdout_split(
+            train_x, train_y, args.validation_fraction
+        )
+        data_settings["evaluated_on"] = f"validation split ({args.validation_fraction})"
     settings = {
         "epochs": args.epochs,
         "learning_rate": args.lr,
         "batch_size": args.batch_size,
         "memory_per_class": args.memory_per_class,
+        "feature_power": args.feature_power,
     }
     data = make_feature_data(train_x, train_y, test_x, test_y)
     if args.experiment == "strategies":
@@ -116,6 +145,7 @@ def main():
             "task_order": [list(pair) for pair in TASK_ORDER],
             "epochs_per_experience": args.epochs,
             "learning_rate": args.lr,
+            "feature_power": args.feature_power,
             "batch_size": args.batch_size,
             "memory_per_class": args.memory_per_class,
             "experiment": args.experiment,
