@@ -9,7 +9,7 @@ degree grows 1 -> 10, `lr = 0.5`, 300 full-batch epochs per experience, replay c
 * **Expansion invariant.** Old coefficients are copied bit-for-bit, new ones are zero, so `f_{d+1} = f_d` up to float rounding. Measured in the continual loop on train, test, random and out-of-region inputs at every expansion: max score difference <= 1.8e-12, max probability difference <= 1.4e-14 (the loop would raise above 1e-9).
 * **Explicitly frozen coefficients never change.** Asserted exactly (bit equality) inside `train`. The frozen-coefficient maximum is now reported as unavailable when a strategy has no frozen coefficients, rather than using a vacuous zero. The report's historical tables predate this diagnostic correction.
 * **Strategy B constraint.** `g(x_ref) = 0` holds at the reference inputs to rounding: max change at reference inputs <= 2.7e-15, zero prediction flips there, at every experience.
-* **Representational identities.** Unconstrained `f_old + g` over all coefficients is the same optimisation problem as ordinary training (observed: identical rows in every table); with g restricted to new coefficients it equals `frozen_old`.
+* **Representational identities.** Unconstrained `f_old + g` over all coefficients is the same optimisation problem as ordinary training, and with g restricted to new coefficients it equals `frozen_old` (tested; the former `strategy_a_*` presets were removed because they only duplicated these two rows).
 * **Not guaranteed:** that preserving `f_old` at finite reference points preserves it anywhere else, or that a preserved/frozen old component keeps the combined classifier's predictions.
 
 ## 2. What was measured (seed 0, after experience 10)
@@ -19,7 +19,7 @@ degree grows 1 -> 10, `lr = 0.5`, 300 full-batch epochs per experience, replay c
 | joint training (notebook 01, degree 10, 5000 epochs) | 0.987 | 0.986 | 0.990 | - | - |
 | `ordinary_no_replay` | 0.867 | 0.986 | 0.928 | 0.122 | 0.310 |
 | `ordinary` (replay) | 0.966 | 0.970 | 0.978 | 0.007 | 0.048 |
-| `frozen_old` (= `strategy_a_new`) | 0.844 | 0.860 | 0.988 | 0.002 | 0.016 |
+| `frozen_old` | 0.844 | 0.860 | 0.988 | 0.002 | 0.016 |
 | `small_old_lr` (0.1x) | 0.915 | 0.922 | 0.950 | 0.016 | 0.068 |
 | `strategy_b_all` | 0.855 | 0.934 | 0.958 | 0.000 | 0.002 |
 | `strategy_b_new` | 0.842 | 0.844 | 0.952 | 0.000 | 0.000 |
@@ -63,4 +63,32 @@ Produced by `experiments/synthetic_degree_ablation.py` and `experiments/class_in
 * **Binary task: capacity matters, gradual growth does not.** Degree 1 cannot represent the sinusoidal boundary (0.910); growing and fixed degree 10 are within one standard deviation of each other (the same conclusion as finding 7).
 * **Ring: no capacity effect.** The 3-epoch gap (0.709 vs 0.909) disappears with training (0.906 / 0.910 / 0.908 at 30 epochs), as expected for a linearly solvable task: it reflects how fast each model learns a new class from zero-initialised weights in a fixed number of steps.
 * **Split MNIST: expansion helps, gradual growth does not matter.** The ordering `fixed_linear` < `expanding` ~ `fixed_capacity` holds from 1 to 30 epochs, but every number is far from converged, forgetting is severe in all conditions (mostly because 200 replay examples per old class compete with about 12,000 fresh examples per new experience), and absolute values depend strongly on the epoch budget. Only five seeds that share one projection and one training set were run.
+
+## 7. Strategy questions, checked on the binary task and on Split MNIST
+
+Five seeds, 3 epochs for Split MNIST (`--experiment strategies`), 300 epochs for the binary task; mean over seeds. `old_flip` is the fraction of old-class (binary: old-experience) test inputs whose prediction changed during the latest experience.
+
+| rule | binary: final mean acc | binary: old-function change | Split MNIST: final mean acc | MNIST: current-exp acc | MNIST: forgetting | MNIST: old_flip |
+| --- | --- | --- | --- | --- | --- | --- |
+| `ordinary_no_replay` | 0.866 | - | 0.192 | 0.902 | 0.925 | 0.139 |
+| `ordinary` | **0.965** | 2.470 | 0.246 | 0.902 | 0.858 | 0.385 |
+| `small_old_lr` | 0.916 | 1.134 | 0.260 | 0.897 | 0.838 | 0.078 |
+| `frozen_old` | 0.842 | 0.707 | 0.274 | 0.893 | 0.820 | 0.021 |
+| Strategy B, 3 refs (default) | 0.840 | 0.302 | **0.538** | 0.683 | **0.405** | 0.074 |
+
+Strategy B versus the number of reference inputs (Split MNIST: per old class; binary: per old experience):
+
+| refs | 1 | 2 / 3 | 5 / 10 | 30 | 100 | 200 |
+| --- | --- | --- | --- | --- | --- | --- |
+| binary final mean acc (1, 2, 3, 5 refs) | 0.912 | 0.848 / 0.840 | 0.847 | - | - | - |
+| Split MNIST final mean acc | 0.417 | 0.538 (3) | 0.622 (10) | 0.594 | 0.278 | 0.199 |
+| Split MNIST current-exp acc | 0.828 | 0.683 (3) | 0.434 (10) | 0.151 | 0.004 | 0.000 |
+
+* **Aliases.** `strategy_a_all` / `strategy_a_new` were identical to `ordinary` / `frozen_old` and have been removed.
+* **Why Strategy B fits the sine curve badly.** Not optimisation: 10x the epochs gives 0.839 +/- 0.031 versus 0.840. It is the constraint: pinning `g` at 3 points per old experience leaves `null_dim` growing (3 -> 39) but almost none of it usable in the current strip (`loss_reduction` is ~8e-3 at experiences 2-3 and never exceeds 4e-3 afterwards, 1e-4 at experience 4). Accuracy falls monotonically with the number of references (0.965 ordinary, 0.912, 0.848, 0.840), and at 5 references the old function is preserved almost exactly (change 0.014) at the same accuracy as `frozen_old` (0.842), which moves the old function far more (0.707). `strategy_b_new` has `null_dim = 0` from experience 2 on: zero loss reduction and zero update, i.e. it does not learn after experience 1.
+* **Learning indicators.** `null_dim` is only defined for Strategy B (it is `None`/`n/a` elsewhere, not "not learning"). For every rule use `loss_reduction`, `trainable_l1_update` / `n_trainable`, current-experience accuracy and the old-function change columns, in notebook 02 and in the class-incremental records.
+* **Expansion versus no expansion is not a bug.** Degree 1 throughout is clearly worse on the binary task (0.910 vs 0.965) and on Split MNIST (0.176 vs 0.246). Growing 1..10 versus fixed degree 10 differ early (after experience 1: 0.959 vs 0.988, the fixed model is better) and converge by experiences 8-10, because zero-initialised expansion preserves the function and replay covers all experiences: once every coefficient exists the end state is set by the data, not the growth path.
+* **The preferred rule depends on the problem.** On the binary regression-like task `ordinary` is best and every stability mechanism costs accuracy. On class-incremental Split MNIST the opposite holds: forgetting is dominated by new-class logits taking over old-class regions (200 replay examples per old class against ~12,000 fresh ones), and a few reference constraints roughly halve forgetting (Strategy B, 3 refs: 0.405 vs 0.858) while costing current-experience accuracy (0.683 vs 0.902). Strategy B is a stability-plasticity dial: with all stored examples as references the null space is empty and nothing is learned.
+
+**Limits of the Split MNIST evidence.** Nothing is trained to convergence: Strategy B's lead over `ordinary` narrows with more epochs (3 epochs 0.538 vs 0.245; 10: 0.561 vs 0.367; 30: 0.586 vs 0.479, 3 seeds) and `frozen_old` falls behind `ordinary` from 10 epochs on. The reference-count sweep was read off test accuracy, so its best value (about 10 per class) must not be reported as tuned; selecting it needs a held-out validation split. Seeds share one projection and one training set. Simple alternatives that target the recency bias directly (class-balanced replay sampling, logit bias correction) were not run, so Strategy B has not been shown to beat them.
 

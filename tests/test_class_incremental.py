@@ -6,12 +6,14 @@ import pytest
 
 from polynomial_cl.class_incremental import (
     CONDITIONS,
+    STRATEGIES,
     TASK_ORDER,
     make_feature_data,
     make_synthetic_2d,
     make_task_plan,
     run_comparison,
     run_condition,
+    run_strategy_comparison,
     summarize_runs,
 )
 from polynomial_cl.class_incremental import experiment as experiment_module
@@ -23,7 +25,7 @@ from polynomial_cl.class_incremental.features import (
     n_polynomial_features,
     scaled_polynomial_features,
 )
-from polynomial_cl.class_incremental.training import fit_task
+from polynomial_cl.class_incremental.training import fit_task, null_space_basis
 
 
 # ---------------------------------------------------------------- data
@@ -110,7 +112,7 @@ def test_zero_initialised_expansion_preserves_logits_exactly():
 
 
 # ------------------------------------------------------------ training
-def _fit(weights, x, y, eligible, replay=None, epochs=2):
+def _fit(weights, x, y, eligible, replay=None, epochs=2, **restrictions):
     rx, ry = (
         replay
         if replay
@@ -118,7 +120,7 @@ def _fit(weights, x, y, eligible, replay=None, epochs=2):
     )
     return fit_task(
         weights, x, y, rx, ry, epochs=epochs, learning_rate=0.1, batch_size=3, seed=5,
-        eligible_classes=np.array(eligible),
+        eligible_classes=np.array(eligible), **restrictions,
     )  # fmt: skip
 
 
@@ -287,3 +289,152 @@ def test_summary_uses_sample_std_and_zero_for_a_single_seed():
         np.std([0.7, 0.9], ddof=1)
     )
     assert summary["fixed_linear"]["mean_forgetting"] == {"mean": 0.2, "std": 0.0}
+
+
+# ------------------------------------------------------------ strategies
+def test_null_space_basis_annihilates_the_design_and_is_orthonormal():
+    design = np.random.default_rng(1).normal(size=(5, 12))
+    basis = null_space_basis(design)
+    assert basis.shape == (12, 7)
+    np.testing.assert_allclose(design @ basis, 0.0, atol=1e-5)
+    np.testing.assert_allclose(basis.T @ basis, np.eye(7), atol=1e-5)
+    assert null_space_basis(np.empty((0, 4))).shape == (
+        4,
+        4,
+    )  # no constraint -> everything free
+    assert null_space_basis(np.random.default_rng(2).normal(size=(6, 6))).shape == (
+        6,
+        0,
+    )
+
+
+def _toy_problem():
+    rng = np.random.default_rng(3)
+    x = np.column_stack([np.ones(30), rng.normal(size=(30, 3))]).astype(np.float32)
+    return x, rng.integers(0, 2, size=30)
+
+
+def test_frozen_and_slowed_coefficients_follow_update_scale():
+    x, y = _toy_problem()
+    start = np.random.default_rng(4).normal(size=(4, 10)).astype(np.float32)
+    scale = np.ones_like(start)
+    scale[:2, :2] = 0.0
+    frozen = _fit(start.copy(), x, y, [0, 1], update_scale=scale)
+    np.testing.assert_array_equal(frozen[:2, :2], start[:2, :2])
+    assert np.any(frozen[2:, :2] != start[2:, :2]) and np.any(
+        frozen[:2, :2] == start[:2, :2]
+    )
+    scale[:2, :2] = 0.1
+    slowed = _fit(start.copy(), x, y, [0, 1], update_scale=scale)
+    free = _fit(start.copy(), x, y, [0, 1])
+    moved = lambda w: np.abs(w[:2, :2] - start[:2, :2]).sum()
+    assert 0 < moved(slowed) < moved(free)
+
+
+def test_null_basis_keeps_reference_logits_fixed_while_other_inputs_move():
+    x, y = _toy_problem()
+    refs = x[:3]
+    basis = null_space_basis(refs)
+    start = np.random.default_rng(5).normal(size=(4, 10)).astype(np.float32)
+    trained = _fit(start.copy(), x, y, [0, 1], null_basis=basis, epochs=5)
+    np.testing.assert_allclose(refs @ trained[:, :2], refs @ start[:, :2], atol=1e-5)
+    assert np.abs(x[3:] @ trained[:, :2] - x[3:] @ start[:, :2]).max() > 1e-3
+
+
+def test_update_restrictions_validate_their_shapes():
+    x, y = _toy_problem()
+    with pytest.raises(ValueError, match="update_scale"):
+        _fit(np.zeros((4, 10), np.float32), x, y, [0, 1], update_scale=np.ones((4, 9)))
+    with pytest.raises(ValueError, match="null_basis"):
+        _fit(np.zeros((4, 10), np.float32), x, y, [0, 1], null_basis=np.ones((3, 2)))
+
+
+def _strategy_runs(data, **kwargs):
+    tasks, memory = make_task_plan(data.train_y, 2, 2)
+    return {
+        s: run_condition("expanding", data, tasks, memory, seed=2, epochs=1, learning_rate=0.05,
+                         batch_size=8, strategy=s, **kwargs)
+        for s in STRATEGIES
+    }  # fmt: skip
+
+
+def test_default_strategy_is_ordinary_and_unknown_strategies_are_rejected(tiny_data):
+    tasks, memory = make_task_plan(tiny_data.train_y, 2, 2)
+    kwargs = {"seed": 2, "epochs": 1, "learning_rate": 0.05, "batch_size": 8}
+    default = run_condition("expanding", tiny_data, tasks, memory, **kwargs)
+    explicit = run_condition(
+        "expanding", tiny_data, tasks, memory, strategy="ordinary", **kwargs
+    )
+    assert default == explicit
+    with pytest.raises(ValueError, match="unknown strategy"):
+        run_condition("expanding", tiny_data, tasks, memory, strategy="nope", **kwargs)
+
+
+def test_old_coefficient_definition_gives_the_expected_trainable_counts(tiny_data):
+    # 2-D features at degrees 1,2,3,3,3 -> 3,6,10,10,10 rows; classes introduced 2 per experience.
+    # Old coefficients = (rows present before) x (classes introduced before):
+    #   exp2: 3x2, exp3: 6x4, exp4: 10x6, exp5: 10x8, exp1: none.
+    runs = _strategy_runs(tiny_data)
+    total = [3 * 2, 6 * 4, 10 * 6, 10 * 8, 10 * 10]
+    assert runs["ordinary"]["n_trainable_by_task"] == total
+    assert runs["frozen_old"]["n_trainable_by_task"] == [
+        6,
+        24 - 6,
+        60 - 24,
+        80 - 60,
+        100 - 80,
+    ]
+    assert runs["small_old_lr"]["n_trainable_by_task"] == total  # slowed, not frozen
+
+
+def test_strategy_b_preserves_reference_logits_and_reports_the_free_dimension(
+    tiny_data,
+):
+    runs = _strategy_runs(tiny_data, n_ref_per_class=1)
+    b = runs["strategy_b"]
+    # one reference per old class -> 2, 4, 6, 8 constraints on 6, 10, 10, 10 features
+    assert b["null_dim_by_task"] == [None, 4, 6, 4, 2]
+    assert max(c for c in b["ref_logit_change_by_task"] if c is not None) <= 1e-4
+    assert b["n_trainable_by_task"][1:] == [4 * 4, 6 * 6, 4 * 8, 2 * 10]
+    for name in set(STRATEGIES) - {"strategy_b"}:
+        assert all(v is None for v in runs[name]["null_dim_by_task"])
+        assert all(v is None for v in runs[name]["ref_logit_change_by_task"])
+
+
+def test_indicators_are_recorded_for_every_strategy(tiny_data):
+    for name, run in _strategy_runs(tiny_data).items():
+        assert len(run["train_loss_by_task"]) == 5, name
+        losses = run["train_loss_by_task"]
+        assert all(before >= after >= 0 for before, after in losses), name
+        if (
+            name != "strategy_b"
+        ):  # B may have no free dimension left, i.e. nothing to learn
+            assert all(before > after for before, after in losses), name
+            assert all(v > 0 for v in run["l1_update_by_task"]), name
+        assert run["old_logit_change_by_task"][0] is None
+        assert all(v >= 0 for v in run["old_logit_change_by_task"][1:])
+        assert 0 <= run["mean_old_flip_fraction"] <= 1
+
+
+def test_frozen_old_changes_old_logits_less_than_ordinary_training(tiny_data):
+    runs = _strategy_runs(tiny_data)
+    assert (
+        runs["frozen_old"]["mean_old_logit_change"]
+        < runs["ordinary"]["mean_old_logit_change"]
+    )
+
+
+def test_strategy_comparison_pairs_strategies_within_a_seed(tiny_data):
+    kwargs = {
+        "epochs": 1,
+        "learning_rate": 0.05,
+        "batch_size": 8,
+        "memory_per_class": 2,
+    }
+    result = run_strategy_comparison(tiny_data, [0, 1], **kwargs)
+    assert result == run_strategy_comparison(tiny_data, [0, 1], **kwargs)
+    assert len(result["runs"]) == 2 * len(STRATEGIES)
+    assert set(result["summary"]) == set(STRATEGIES)
+    assert "mean_old_flip_fraction" in result["summary"]["strategy_b"]
+    with pytest.raises(ValueError, match="seed"):
+        run_strategy_comparison(tiny_data, [], **kwargs)

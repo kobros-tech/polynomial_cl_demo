@@ -61,3 +61,18 @@ def test_degree_ablation_script_reports_all_three_conditions(tmp_path):
         "fixed_capacity",
     }
     assert len(result["runs"]) == 3
+
+
+def test_class_incremental_script_strategies_mode(tmp_path):
+    out = tmp_path / "strategies.json"
+    run_script(
+        "class_incremental.py", "--dataset", "synthetic_2d", "--experiment", "strategies",
+        "--seeds", 0, "--epochs", 1, "--memory-per-class", 2, "--train-per-class", 6,
+        "--test-per-class", 4, "--n-ref-per-class", 1, "--output", out,
+    )  # fmt: skip
+    result = json.loads(out.read_text())
+    assert result["protocol"]["experiment"] == "strategies"
+    assert result["protocol"]["n_ref_per_class"] == 1
+    assert set(result["summary"]) == {
+        "ordinary", "ordinary_no_replay", "small_old_lr", "frozen_old", "strategy_b"
+    }  # fmt: skip

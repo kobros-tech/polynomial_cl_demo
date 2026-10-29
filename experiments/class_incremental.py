@@ -17,6 +17,7 @@ from polynomial_cl.class_incremental import (
     make_feature_data,
     make_synthetic_2d,
     run_comparison,
+    run_strategy_comparison,
 )
 from polynomial_cl.class_incremental.data import N_COMPONENTS, TASK_ORDER
 from polynomial_cl.class_incremental.experiment import (
@@ -25,12 +26,23 @@ from polynomial_cl.class_incremental.experiment import (
     EPOCHS,
     LEARNING_RATE,
     MEMORY_PER_CLASS,
+    N_REF_PER_CLASS,
+    STRATEGIES,
 )
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--dataset", choices=("synthetic_2d", "split_mnist"), required=True)
+    p.add_argument(
+        "--experiment",
+        choices=("conditions", "strategies"),
+        default="conditions",
+        help="conditions: fixed_linear/expanding/fixed_capacity; strategies: update rules on 'expanding'",
+    )
+    p.add_argument(
+        "--n-ref-per-class", type=int, default=N_REF_PER_CLASS, help="strategy_b only"
+    )
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2, 3, 4])
     p.add_argument("--epochs", type=int, default=EPOCHS)
@@ -84,14 +96,19 @@ def main():
             "projection": "fixed orthonormal random projection; no data fitting",
         }
 
-    result = run_comparison(
-        make_feature_data(train_x, train_y, test_x, test_y),
-        args.seeds,
-        epochs=args.epochs,
-        learning_rate=args.lr,
-        batch_size=args.batch_size,
-        memory_per_class=args.memory_per_class,
-    )
+    settings = {
+        "epochs": args.epochs,
+        "learning_rate": args.lr,
+        "batch_size": args.batch_size,
+        "memory_per_class": args.memory_per_class,
+    }
+    data = make_feature_data(train_x, train_y, test_x, test_y)
+    if args.experiment == "strategies":
+        result = run_strategy_comparison(
+            data, args.seeds, n_ref_per_class=args.n_ref_per_class, **settings
+        )
+    else:
+        result = run_comparison(data, args.seeds, **settings)
     payload = {
         "dataset": args.dataset,
         "protocol": {
@@ -101,7 +118,10 @@ def main():
             "learning_rate": args.lr,
             "batch_size": args.batch_size,
             "memory_per_class": args.memory_per_class,
+            "experiment": args.experiment,
             "degrees_by_condition": {name: list(d) for name, d in DEGREES.items()},
+            "strategies": list(STRATEGIES) if args.experiment == "strategies" else None,
+            "n_ref_per_class": args.n_ref_per_class,
             **data_settings,
         },
         **result,

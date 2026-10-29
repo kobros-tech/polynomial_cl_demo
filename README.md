@@ -68,12 +68,11 @@ the degree grows by one per experience (configurable via `degrees=`). Expansion 
 | `ordinary` | one global learning rate, balanced replay |
 | `frozen_old` | existing coefficients have mask False (never updated), new ones train |
 | `small_old_lr` | existing coefficients use `lr_old_factor = 0.1` |
-| `strategy_a_all` / `strategy_a_new` | `f = f_old + g`, **frozen old component**, g unconstrained (over all / only new coefficients) |
 | `strategy_b_all` / `strategy_b_new` | as A, plus **preserved old predictions**: `g(x_ref) = 0` enforced exactly on reference inputs |
 
 Two facts worth knowing before reading results (both are tested):
 
-* `strategy_a_all` is numerically identical to `ordinary` (same function class, same starting point), and `strategy_a_new` is identical to `frozen_old`. A and "ordinary" differ in representation, not behaviour.
+* There are no separate `strategy_a_*` presets: an unconstrained `f = f_old + g` over all coefficients (`composed=True, scope="all"`) is the same optimisation problem as `ordinary`, and over only the new coefficients (`scope="new"`) it is `frozen_old`. They are representational aliases, not extra experimental conditions, so they are not offered (this is tested).
 * Strategy B constrains `g` only at finitely many reference inputs (the first 3 buffered inputs of every old experience, configurable). Implementation: `g`'s coefficients are restricted to the null space of the reference design matrix (SVD), so `g(x_ref) = 0` holds to rounding. This says **nothing** about inputs elsewhere; the metrics measure how much old scores actually move on the full old test sets. If the constraint uses up every degree of freedom, `g` cannot learn and the run reports that (`null_dim = 0`); constraints are never relaxed automatically.
 * Presets cannot be silently overridden: `make_config("ordinary_no_replay", m_replay=100)` raises.
 
@@ -118,6 +117,15 @@ python experiments/class_incremental.py --dataset split_mnist  --output results/
 ```
 
 Conditions `fixed_linear` (degree 1), `expanding` (degrees 1, 2, 3, 3, 3; new coefficients zero-initialised, logit change asserted below 1e-5) and `fixed_capacity` (degree 3 throughout) share task order, replay indices, seed, optimiser and epochs. During training and evaluation only classes introduced so far compete, so output weights of future classes are never trained. MNIST images are normalised and mapped to 16 dimensions by a fixed random orthonormal projection (never fitted to data) before the explicit polynomial map (17, 153, 969 features at degrees 1, 2, 3); each degree group is divided by the square root of its size. Forgetting is the best accuracy an experience ever had minus its final accuracy, averaged over experiences 1-4 (the last has no later evaluation). `notebooks/03_class_incremental.ipynb` runs the same code and plots the accuracy matrices.
+
+**3. Update rules on Split MNIST** (`frozen_old`, `small_old_lr`, Strategy B, plus `ordinary` and `ordinary_no_replay`, on the `expanding` schedule):
+
+```bash
+python experiments/class_incremental.py --dataset split_mnist --experiment strategies --output results/split_mnist_strategies.json
+python experiments/class_incremental.py --dataset split_mnist --experiment strategies --n-ref-per-class 10 --output results/split_mnist_b10.json
+```
+
+The rules have the same meaning as in the binary experiments, applied to the softmax head. A coefficient is *old* if its feature row existed before the current experience **and** its class column was already introduced; new feature rows and the new classes' columns always train. `small_old_lr` multiplies the old coefficients' gradient by 0.1, `frozen_old` by 0; Strategy B projects every gradient onto the null space of the design matrix at `--n-ref-per-class` stored inputs per old class (default 3), so the logits at those inputs cannot change. Every record carries learning indicators that exist for *all* rules: training loss before/after each experience, L1 size of the update, number of trainable coefficients, and how far old-class logits and predictions moved on old-class test inputs (`null_dim` exists only for Strategy B). Notebook 03 shows them and sweeps the number of reference inputs.
 
 Read these results with two caveats (numbers in [`REPORT.md`](REPORT.md) section 6):
 

@@ -10,15 +10,18 @@ for the experiment (see ``experiment.py`` for the protocol).
 from .data import TASK_ORDER, load_projected_mnist, make_synthetic_2d
 from .experiment import (
     CONDITIONS,
+    STRATEGIES,
     make_feature_data,
     make_task_plan,
     run_comparison,
     run_condition,
+    run_strategy_comparison,
     summarize_runs,
 )
 
 __all__ = [
     "CONDITIONS",
+    "STRATEGIES",
     "TASK_ORDER",
     "load_projected_mnist",
     "make_feature_data",
@@ -26,5 +29,6 @@ __all__ = [
     "make_task_plan",
     "run_comparison",
     "run_condition",
+    "run_strategy_comparison",
     "summarize_runs",
 ]

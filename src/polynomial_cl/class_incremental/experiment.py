@@ -28,7 +28,7 @@ from .features import (
     n_polynomial_features,
     scaled_polynomial_features,
 )
-from .training import fit_task
+from .training import cross_entropy, fit_task, null_space_basis
 
 CONDITIONS = ("fixed_linear", "expanding", "fixed_capacity")
 DEGREES = {
@@ -37,6 +37,28 @@ DEGREES = {
     "fixed_capacity": (MAX_DEGREE,) * 5,
 }
 SUMMARY_METRICS = ("final_mean_accuracy", "final_current_accuracy", "mean_forgetting")
+
+# Update rules compared on the ``expanding`` schedule (same definitions as the binary
+# experiments in polynomial_cl.training). A coefficient is "old" if it existed before the
+# current experience: its feature row was already present AND its class column was already
+# introduced. New feature rows and the new classes' columns always train freely.
+STRATEGIES = (
+    "ordinary",
+    "ordinary_no_replay",
+    "small_old_lr",
+    "frozen_old",
+    "strategy_b",
+)
+OLD_LR_FACTOR = 0.1
+N_REF_PER_CLASS = (
+    3  # strategy_b: reference inputs per old class (first stored replay examples)
+)
+STRATEGY_METRICS = (
+    *SUMMARY_METRICS,
+    "mean_old_logit_change",
+    "mean_old_flip_fraction",
+    "mean_loss_reduction",
+)
 
 # Defaults shared by the command line tool and the notebook.
 EPOCHS = 3
@@ -104,6 +126,62 @@ def accuracy_by_task(weights, test_x, test_y, n_tasks_seen):
     return accuracy
 
 
+INDICATORS = (
+    "train_loss_by_task",  # [loss before, loss after] on this experience's training set (+ replay)
+    "l1_update_by_task",  # sum |w_after - w_before| over the coefficients used this experience
+    "n_trainable_by_task",  # coefficients that may change (null-space dimension x classes for B)
+    "null_dim_by_task",  # strategy_b only: dimension left free by the constraint
+    "old_logit_change_by_task",  # max change of old-class logits on old-class test inputs
+    "old_flip_fraction_by_task",  # old-class test inputs whose prediction among old classes changed
+    "ref_logit_change_by_task",  # strategy_b only: max logit change at the reference inputs
+)
+
+
+def _mean_after_first(values):
+    """Mean over experiences 2..5 (experience 1 has no old function to preserve)."""
+    return float(np.mean([v for v in values[1:] if v is not None]))
+
+
+def _record_indicators(
+    out, weights, before, data, count, task, old_test, refs, scale, null_basis,
+    loss_before, loss_after, train_x, train_y,
+):  # fmt: skip
+    n_seen, old_classes = 2 * (task + 1), 2 * task
+    used = (slice(None, count), slice(None, n_seen))
+    out["train_loss_by_task"].append([loss_before, loss_after])
+    out["l1_update_by_task"].append(float(np.abs(weights - before)[used].sum()))
+    if null_basis is not None:
+        trainable = null_basis.shape[1] * n_seen
+    elif scale is not None:
+        trainable = int((scale[used] > 0).sum())
+    else:
+        trainable = count * n_seen
+    out["n_trainable_by_task"].append(int(trainable))
+    out["null_dim_by_task"].append(
+        None if null_basis is None else int(null_basis.shape[1])
+    )
+    if task:
+        x = data.test_x[old_test, :count]
+        old_before, old_after = (
+            x @ before[:, :old_classes],
+            x @ weights[:, :old_classes],
+        )
+        out["old_logit_change_by_task"].append(
+            float(np.max(np.abs(old_after - old_before)))
+        )
+        flips = old_before.argmax(axis=1) != old_after.argmax(axis=1)
+        out["old_flip_fraction_by_task"].append(float(flips.mean()))
+    else:
+        out["old_logit_change_by_task"].append(None)
+        out["old_flip_fraction_by_task"].append(None)
+    if refs is None:
+        out["ref_logit_change_by_task"].append(None)
+    else:
+        ref_x = data.train_x[refs, :count]
+        change = np.abs(ref_x @ weights[:, :n_seen] - ref_x @ before[:, :n_seen])
+        out["ref_logit_change_by_task"].append(float(change.max()))
+
+
 def run_condition(
     condition,
     data: FeatureData,
@@ -114,10 +192,20 @@ def run_condition(
     epochs=EPOCHS,
     learning_rate=LEARNING_RATE,
     batch_size=BATCH_SIZE,
+    strategy="ordinary",
+    n_ref_per_class=N_REF_PER_CLASS,
 ):
-    """Run one condition; returns a JSON-serialisable record with the accuracy matrix."""
+    """Run one condition; returns a JSON-serialisable record with the accuracy matrix.
+
+    ``strategy`` selects the update rule (see ``STRATEGIES``); the default is plain training with
+    replay. Besides accuracy, every record carries indicators of whether the model is learning
+    (loss before/after, size of the update, trainable coefficients) and how much the old
+    function moved (change of old-class logits on old-class test inputs).
+    """
     if condition not in CONDITIONS:
         raise ValueError(f"unknown condition: {condition}")
+    if strategy not in STRATEGIES:
+        raise ValueError(f"unknown strategy: {strategy}")
     degrees = DEGREES[condition]
     n_tasks = len(degrees)
     weights = np.zeros(
@@ -125,8 +213,10 @@ def run_condition(
     )
     matrix = np.full((n_tasks, n_tasks), np.nan)
     feature_counts, expansion_changes = [], []
+    indicators = {k: [] for k in INDICATORS}
 
     for task, indices in enumerate(task_indices):
+        old_rows = weights.shape[0] if task else 0
         count = n_polynomial_features(data.n_components, degrees[task])
         if count > weights.shape[0]:
             # Expansion invariant: appending zero coefficients must not change any logit.
@@ -141,10 +231,33 @@ def run_condition(
             expansion_changes.append(change)
         feature_counts.append(count)
 
-        if task:
-            replay = np.concatenate([memory_indices[c] for c in range(2 * task)])
+        old_classes = 2 * task
+        n_seen = 2 * (task + 1)
+        if task and strategy != "ordinary_no_replay":
+            replay = np.concatenate([memory_indices[c] for c in range(old_classes)])
         else:
             replay = np.empty(0, dtype=np.int64)
+        scale = null_basis = refs = None
+        if strategy in ("frozen_old", "small_old_lr"):
+            scale = np.ones(weights.shape, np.float32)
+            scale[:old_rows, :old_classes] = (
+                0.0 if strategy == "frozen_old" else OLD_LR_FACTOR
+            )
+        elif strategy == "strategy_b" and task:
+            refs = np.concatenate(
+                [memory_indices[c][:n_ref_per_class] for c in range(old_classes)]
+            )
+            null_basis = null_space_basis(data.train_x[refs, :count])
+
+        train_x = np.concatenate(
+            [data.train_x[indices, :count], data.train_x[replay, :count]]
+        )
+        train_y = data.train_y[np.concatenate([indices, replay])].astype(
+            np.int64, copy=False
+        )
+        old_test = np.flatnonzero(data.test_y < old_classes)
+        before = weights.copy()
+        loss_before = cross_entropy(weights, train_x, train_y, n_seen)
         weights = fit_task(
             weights,
             data.train_x[indices, :count],
@@ -155,8 +268,14 @@ def run_condition(
             learning_rate=learning_rate,
             batch_size=batch_size,
             seed=seed + task,
-            eligible_classes=np.arange(2 * (task + 1)),
+            eligible_classes=np.arange(n_seen),
+            update_scale=scale,
+            null_basis=null_basis,
         )
+        _record_indicators(
+            indicators, weights, before, data, count, task, old_test, refs, scale, null_basis,
+            loss_before, cross_entropy(weights, train_x, train_y, n_seen), train_x, train_y,
+        )  # fmt: skip
         matrix[task, : task + 1] = accuracy_by_task(
             weights, data.test_x[:, :count], data.test_y, task + 1
         )[: task + 1]
@@ -168,6 +287,7 @@ def run_condition(
     ]
     return {
         "condition": condition,
+        "strategy": strategy,
         "seed": seed,
         "active_degree_by_task": list(degrees),
         "feature_count_by_task": feature_counts,
@@ -180,6 +300,18 @@ def run_condition(
         "forgetting_by_task": forgetting,
         # The last experience has no later evaluation, so it is excluded from the mean.
         "mean_forgetting": float(np.mean(forgetting[:-1])),
+        **indicators,
+        "mean_old_logit_change": _mean_after_first(
+            indicators["old_logit_change_by_task"]
+        ),
+        "mean_old_flip_fraction": _mean_after_first(
+            indicators["old_flip_fraction_by_task"]
+        ),
+        "mean_loss_reduction": float(
+            np.mean(
+                [before - after for before, after in indicators["train_loss_by_task"]]
+            )
+        ),
     }
 
 
@@ -220,3 +352,34 @@ def run_comparison(
                 )
             )
     return {"runs": runs, "summary": summarize_runs(runs)}
+
+
+def run_strategy_comparison(
+    data: FeatureData,
+    seeds,
+    *,
+    strategies=STRATEGIES,
+    epochs=EPOCHS,
+    learning_rate=LEARNING_RATE,
+    batch_size=BATCH_SIZE,
+    memory_per_class=MEMORY_PER_CLASS,
+    n_ref_per_class=N_REF_PER_CLASS,
+):
+    """Compare update rules on the ``expanding`` schedule; same task order and replay per seed."""
+    if not len(seeds):
+        raise ValueError("at least one seed is required")
+    runs = []
+    for seed in seeds:
+        tasks, memory = make_task_plan(data.train_y, seed, memory_per_class)
+        for strategy in strategies:
+            runs.append(
+                run_condition(
+                    "expanding", data, tasks, memory, seed=seed, epochs=epochs,
+                    learning_rate=learning_rate, batch_size=batch_size,
+                    strategy=strategy, n_ref_per_class=n_ref_per_class,
+                )
+            )  # fmt: skip
+    return {
+        "runs": runs,
+        "summary": mean_std_by_condition(runs, STRATEGY_METRICS, key="strategy"),
+    }

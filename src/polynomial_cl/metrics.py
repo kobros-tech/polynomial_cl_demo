@@ -73,15 +73,15 @@ def summary_table(result):
     return rows
 
 
-def mean_std_by_condition(rows, metric_names):
+def mean_std_by_condition(rows, metric_names, key="condition"):
     """Aggregate per-seed result rows: {condition: {metric: {"mean", "std"}}}.
 
-    Each row is a dict with a "condition" key plus the named metrics. "std" is the sample
+    Each row is a dict with a ``key`` entry (default "condition") plus the named metrics. "std" is the sample
     standard deviation (ddof=1), or 0.0 when a condition has a single seed.
     """
     summary = {}
-    for condition in dict.fromkeys(row["condition"] for row in rows):
-        subset = [row for row in rows if row["condition"] == condition]
+    for condition in dict.fromkeys(row[key] for row in rows):
+        subset = [row for row in rows if row[key] == condition]
         summary[condition] = {}
         for name in metric_names:
             values = np.asarray([row[name] for row in subset], dtype=float)

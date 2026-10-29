@@ -27,6 +27,8 @@ def fit_task(
     batch_size: int,
     seed: int,
     eligible_classes: np.ndarray | None = None,
+    update_scale: np.ndarray | None = None,
+    null_basis: np.ndarray | None = None,
 ) -> np.ndarray:
     """Train a softmax head on the current task's examples plus replay examples.
 
@@ -34,6 +36,12 @@ def fit_task(
     those output columns, so output weights of classes that have not been introduced yet are
     never touched. The weight array is updated in place and returned. Replay examples are
     appended to the current examples for this call only.
+
+    Optional restrictions on the update (used by the strategy comparison):
+    ``update_scale`` (n_features, n_classes) multiplies the gradient elementwise (0 freezes a
+    coefficient, 0.1 slows it); ``null_basis`` (n_features, k) projects every gradient column
+    onto its span; if the basis spans the null space of a design matrix, the logits of those
+    design rows are unchanged by every update.
     """
     if features.ndim != 2 or len(features) == 0:
         raise ValueError("features must be a non-empty 2D array")
@@ -56,6 +64,10 @@ def fit_task(
         labels = labels.astype(np.int64)
     if np.any(labels < 0) or np.any(labels >= weights.shape[1]):
         raise ValueError("labels must index an output class")
+    if update_scale is not None and update_scale.shape != weights.shape:
+        raise ValueError("update_scale must have the same shape as weights")
+    if null_basis is not None and null_basis.shape[0] != weights.shape[0]:
+        raise ValueError("null_basis must have one row per feature")
     if eligible_classes is None:
         eligible_classes = np.arange(weights.shape[1], dtype=np.int64)
     else:
@@ -80,7 +92,28 @@ def fit_task(
             xb, yb = features[batch], label_columns[batch]
             probabilities = softmax(xb @ weights[:, eligible_classes])
             probabilities[np.arange(len(yb)), yb] -= 1.0
-            weights[:, eligible_classes] -= learning_rate * (
-                xb.T @ probabilities / len(yb)
-            )
+            gradient = xb.T @ probabilities / len(yb)
+            if update_scale is not None:
+                gradient = gradient * update_scale[:, eligible_classes]
+            if null_basis is not None:
+                gradient = null_basis @ (null_basis.T @ gradient)
+            weights[:, eligible_classes] -= learning_rate * gradient
     return weights
+
+
+def null_space_basis(design: np.ndarray, rtol: float = 1e-10) -> np.ndarray:
+    """Orthonormal basis (n_features, k) of {v : design @ v = 0}; k = 0 if nothing is free."""
+    design = np.asarray(design, dtype=np.float64)
+    if design.shape[0] == 0:
+        return np.eye(design.shape[1], dtype=np.float32)
+    _, singular, vt = np.linalg.svd(design, full_matrices=True)
+    rank = int(np.sum(singular > rtol * max(singular[0], 1.0)))
+    return vt[rank:].T.astype(np.float32)
+
+
+def cross_entropy(weights, features, labels, n_classes):
+    """Mean softmax cross-entropy when only the first ``n_classes`` outputs compete."""
+    probabilities = softmax(features @ weights[:, :n_classes])
+    return float(
+        -np.mean(np.log(probabilities[np.arange(len(labels)), labels] + 1e-12))
+    )
