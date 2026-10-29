@@ -97,8 +97,7 @@ def load_mnist(
         paths = {key: fetch(root, filename) for key, filename in FILES.items()}
     else:
         missing = [
-            filename for filename in FILES.values()
-            if not (root / filename).is_file()
+            filename for filename in FILES.values() if not (root / filename).is_file()
         ]
         if missing:
             missing_list = "\n".join(f"  - {name}" for name in missing)

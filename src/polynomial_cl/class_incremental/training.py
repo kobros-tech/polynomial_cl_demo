@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Mohamed Alkobrosli
 # SPDX-License-Identifier: MIT
 
-"""Multiclass linear-head training used by class-incremental experiments."""
+"""Softmax-head training for class-incremental experiments (NumPy only)."""
 
 from __future__ import annotations
 
@@ -28,13 +28,12 @@ def fit_task(
     seed: int,
     eligible_classes: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Train a multiclass linear head on current examples and optional replay.
+    """Train a softmax head on the current task's examples plus replay examples.
 
-    If eligible_classes is supplied, softmax competition and gradients are restricted
-    to those outputs. This prevents future-class weights from being trained before
-    those classes are introduced. The supplied weight array is updated in place;
-    replay examples are appended only for this task's updates. Omitting the argument
-    retains the legacy full-head training behavior.
+    If eligible_classes is given, the softmax competition and the gradient are restricted to
+    those output columns, so output weights of classes that have not been introduced yet are
+    never touched. The weight array is updated in place and returned. Replay examples are
+    appended to the current examples for this call only.
     """
     if features.ndim != 2 or len(features) == 0:
         raise ValueError("features must be a non-empty 2D array")
