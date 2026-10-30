@@ -82,10 +82,13 @@ def test_rate_selection_script_selects_on_validation_and_reports_test(tmp_path):
     out = tmp_path / "selection.json"
     run_script(
         "rate_selection.py", "--dataset", "synthetic_2d", "--powers", 0, 1, "--lrs", 0.05, 0.2,
-        "--select-seeds", 0, "--test-seeds", 0, 1, "--epochs", 1, "--memory-per-class", 2,
+        "--select-seeds", 0, "--test-seeds", 1, 2, "--epochs", 1, "--memory-per-class", 2,
         "--train-per-class", 60, "--test-per-class", 8, "--output", out,
     )  # fmt: skip
     result = json.loads(out.read_text())
+    assert not set(result["protocol"]["select_seeds"]) & set(
+        result["protocol"]["test_seeds"]
+    )
     assert len(result["validation_grid"]) == 4
     assert {row["name"] for row in result["selected"]} == {
         "fixed_linear",
@@ -102,3 +105,25 @@ def test_rate_selection_script_selects_on_validation_and_reports_test(tmp_path):
             (g["feature_power"], g["learning_rate"]) for g in result["validation_grid"]
         }
         assert 0 <= row["final_mean_accuracy"]["mean"] <= 1
+
+
+def test_rate_selection_rejects_overlapping_selection_and_test_seeds(tmp_path):
+    out = tmp_path / "selection.json"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "experiments" / "rate_selection.py"),
+            "--dataset", "synthetic_2d", "--select-seeds", "0", "1",
+            "--test-seeds", "1", "2", "--output", str(out),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )  # fmt: skip
+    assert proc.returncode != 0 and not out.exists()
+    assert "overlap" in proc.stderr and "[1]" in proc.stderr
+
+
+def test_rate_selection_defaults_use_disjoint_seed_sets(tmp_path):
+    proc = run_script("rate_selection.py", "--help")
+    assert "must be disjoint" in proc.stdout.replace("\n", " ")

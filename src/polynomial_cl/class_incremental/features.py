@@ -1,36 +1,26 @@
 # Copyright (c) 2026 Mohamed Alkobrosli
 # SPDX-License-Identifier: MIT
 
-"""Explicit polynomial features in any number of variables, and zero-initialised expansion.
+"""Degree-balanced polynomial features in any number of variables.
 
-Unlike ``polynomial_cl.features`` (2-D, unscaled, used by the binary experiments), this map
-works for any input dimension and divides every degree group by the square root of its size,
-so that higher-degree groups do not dominate merely because they contain more monomials.
-Monomials are ordered by total degree, so the features of degree d are a prefix of those of
-degree d + 1; a model can grow by appending zero coefficients without changing its outputs.
+The monomial enumeration and the zero-coefficient expansion are shared with the binary
+experiments (``polynomial_cl.features``). What is specific here is the *scaling*: every
+positive-degree group is divided by the square root of its size, so that higher-degree
+groups do not dominate merely because they contain more monomials, whereas the binary
+experiments use raw monomials. Monomials are ordered by total degree, so the features of
+degree d are a prefix of those of degree d + 1; a model can grow by appending zero
+coefficients without changing its outputs.
 """
 
 from __future__ import annotations
 
-import itertools
 import math
 
 import numpy as np
 
+from ..features import append_zero_coefficients, monomial_exponents
+
 MAX_DEGREE = 3
-
-
-def monomial_exponents(n_components: int, degree: int) -> np.ndarray:
-    """Exponent rows of all monomials of total degree <= degree (prefix-stable order)."""
-    if n_components < 1 or degree < 0:
-        raise ValueError("n_components must be positive and degree non-negative")
-    rows = [np.zeros(n_components, dtype=np.int16)]
-    for total_degree in range(1, degree + 1):
-        for indices in itertools.combinations_with_replacement(
-            range(n_components), total_degree
-        ):
-            rows.append(np.bincount(indices, minlength=n_components).astype(np.int16))
-    return np.stack(rows)
 
 
 def n_polynomial_features(n_components: int, degree: int) -> int:
@@ -70,11 +60,10 @@ def scaled_polynomial_features(
 
 
 def expand_weights(weights: np.ndarray, new_feature_count: int) -> np.ndarray:
-    """Append zero coefficients (rows); every existing logit is preserved exactly."""
-    if new_feature_count < weights.shape[0]:
-        raise ValueError("feature expansion cannot shrink the weight matrix")
+    """Append zero coefficient rows; every existing logit is preserved exactly.
+
+    Returns ``weights`` itself when no rows are added, otherwise a new array.
+    """
     if new_feature_count == weights.shape[0]:
         return weights
-    expanded = np.zeros((new_feature_count, weights.shape[1]), dtype=weights.dtype)
-    expanded[: weights.shape[0]] = weights
-    return expanded
+    return append_zero_coefficients(weights, new_feature_count)

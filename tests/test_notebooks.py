@@ -24,3 +24,29 @@ def test_notebook_code_cells_compile_and_are_committed_without_outputs(path):
             line for line in cell["source"] if not line.lstrip().startswith(("%", "!"))
         )
         compile(source, f"{path.name}:cell-{index}", "exec")
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.name)
+def test_notebook_executes_top_to_bottom_in_a_clean_kernel(path):
+    """Run every cell in order in a fresh kernel; any exception fails the test.
+
+    The notebook file is not modified. Split MNIST cells run if ``data/mnist`` exists and
+    print a skip message otherwise, so this works on a fresh checkout.
+    """
+    nbformat = pytest.importorskip("nbformat")
+    preprocessors = pytest.importorskip("nbconvert.preprocessors")
+    notebook = nbformat.read(path, as_version=4)
+    executor = preprocessors.ExecutePreprocessor(
+        timeout=3600, kernel_name="python3", allow_errors=False
+    )
+    executor.preprocess(notebook, {"metadata": {"path": str(path.parent)}})
+    # Part I of the main notebook must have produced its tables, not silently skipped.
+    if path.name.startswith("02_"):
+        printed = "".join(
+            output.get("text", "")
+            for cell in notebook.cells
+            if cell.cell_type == "code"
+            for output in cell.outputs
+        )
+        assert "fixed_capacity" in printed and "ordinary_no_replay" in printed

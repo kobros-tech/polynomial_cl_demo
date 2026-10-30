@@ -20,6 +20,7 @@ from typing import NamedTuple
 
 import numpy as np
 
+from ..metrics import forgetting as forgetting_from_matrix
 from ..metrics import mean_std_by_condition
 from .data import TASK_ORDER
 from .features import (
@@ -57,6 +58,7 @@ STRATEGY_METRICS = (
     *SUMMARY_METRICS,
     "mean_old_logit_change",
     "mean_old_flip_fraction",
+    "mean_old_takeover_fraction",
     "mean_loss_reduction",
 )
 
@@ -133,6 +135,7 @@ INDICATORS = (
     "null_dim_by_task",  # strategy_b only: dimension left free by the constraint
     "old_logit_change_by_task",  # max change of old-class logits on old-class test inputs
     "old_flip_fraction_by_task",  # old-class test inputs whose prediction among old classes changed
+    "old_takeover_fraction_by_task",  # old-class test inputs now predicted as a NEW class
     "ref_logit_change_by_task",  # strategy_b only: max logit change at the reference inputs
 )
 
@@ -144,7 +147,7 @@ def _mean_after_first(values):
 
 def _record_indicators(
     out, weights, before, data, count, task, old_test, refs, scale, null_basis,
-    loss_before, loss_after, train_x, train_y,
+    loss_before, loss_after,
 ):  # fmt: skip
     n_seen, old_classes = 2 * (task + 1), 2 * task
     used = (slice(None, count), slice(None, n_seen))
@@ -171,9 +174,17 @@ def _record_indicators(
         )
         flips = old_before.argmax(axis=1) != old_after.argmax(axis=1)
         out["old_flip_fraction_by_task"].append(float(flips.mean()))
+        # The flip diagnostic above only lets old classes compete, so it cannot see a new
+        # class taking over an old example while the old logits barely move. Here every
+        # class seen so far competes, exactly as in the accuracy matrix.
+        predicted = (x @ weights[:, :n_seen]).argmax(axis=1)
+        out["old_takeover_fraction_by_task"].append(
+            float((predicted >= old_classes).mean())
+        )
     else:
         out["old_logit_change_by_task"].append(None)
         out["old_flip_fraction_by_task"].append(None)
+        out["old_takeover_fraction_by_task"].append(None)
     if refs is None:
         out["ref_logit_change_by_task"].append(None)
     else:
@@ -288,17 +299,15 @@ def run_condition(
         )
         _record_indicators(
             indicators, weights, before, data, count, task, old_test, refs, scale, null_basis,
-            loss_before, cross_entropy(weights, train_x, train_y, n_seen), train_x, train_y,
+            loss_before, cross_entropy(weights, train_x, train_y, n_seen),
         )  # fmt: skip
         matrix[task, : task + 1] = accuracy_by_task(
             weights, data.test_x[:, :count], data.test_y, task + 1
         )[: task + 1]
 
-    # Forgetting of an experience: best accuracy it ever had minus its final accuracy.
-    forgetting = [
-        max(0.0, float(np.nanmax(matrix[:, task]) - matrix[-1, task]))
-        for task in range(n_tasks)
-    ]
+    # Forgetting of an experience: best accuracy it ever had minus its final accuracy
+    # (shared definition from polynomial_cl.metrics; the lower triangle has no NaN).
+    forgetting = [float(v) for v in forgetting_from_matrix(matrix, n_tasks - 1)]
     return {
         "condition": condition,
         "strategy": strategy,
@@ -320,6 +329,9 @@ def run_condition(
         ),
         "mean_old_flip_fraction": _mean_after_first(
             indicators["old_flip_fraction_by_task"]
+        ),
+        "mean_old_takeover_fraction": _mean_after_first(
+            indicators["old_takeover_fraction_by_task"]
         ),
         "mean_loss_reduction": float(
             np.mean(

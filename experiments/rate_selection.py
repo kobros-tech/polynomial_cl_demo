@@ -39,8 +39,20 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--powers", nargs="+", type=float, default=[0, 1, 2, 3])
     p.add_argument("--lrs", nargs="+", type=float, default=[0.01, 0.03, 0.1, 0.3, 1.0])
-    p.add_argument("--select-seeds", nargs="+", type=int, default=[0, 1])
-    p.add_argument("--test-seeds", nargs="+", type=int, default=[0, 1, 2, 3, 4])
+    p.add_argument(
+        "--select-seeds",
+        nargs="+",
+        type=int,
+        default=[0, 1],
+        help="seeds used on the validation split to choose (p, lr)",
+    )
+    p.add_argument(
+        "--test-seeds",
+        nargs="+",
+        type=int,
+        default=[2, 3, 4, 5, 6],
+        help="seeds for the reported test result; must be disjoint from --select-seeds",
+    )
     p.add_argument("--validation-fraction", type=float, default=0.1)
     p.add_argument("--epochs", type=int, default=EPOCHS)
     p.add_argument("--memory-per-class", type=int, default=MEMORY_PER_CLASS)
@@ -48,6 +60,12 @@ def main():
         "--n-ref-per-class", type=int, default=N_REF_PER_CLASS, help="strategy_b only"
     )
     args = p.parse_args()
+    shared = sorted(set(args.select_seeds) & set(args.test_seeds))
+    if shared:
+        p.error(
+            f"--select-seeds and --test-seeds overlap on {shared}: the same stochastic "
+            "runs would choose the rates and then be reported as the test estimate"
+        )
 
     run = run_strategy_comparison if args.experiment == "strategies" else run_comparison
     extra = (

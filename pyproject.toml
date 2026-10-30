@@ -18,3 +18,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# Executing the notebooks takes minutes, so it is opt-in: `pytest -m slow`.
+addopts = "-m 'not slow'"
+markers = ["slow: executes whole notebooks in a clean kernel (minutes); run with `pytest -m slow`"]

@@ -419,6 +419,47 @@ def test_indicators_are_recorded_for_every_strategy(tiny_data):
         assert run["old_logit_change_by_task"][0] is None
         assert all(v >= 0 for v in run["old_logit_change_by_task"][1:])
         assert 0 <= run["mean_old_flip_fraction"] <= 1
+        assert run["old_takeover_fraction_by_task"][0] is None
+        assert all(0 <= v <= 1 for v in run["old_takeover_fraction_by_task"][1:])
+        assert 0 <= run["mean_old_takeover_fraction"] <= 1
+
+
+def test_new_class_takeover_is_separate_from_flips_among_old_classes(
+    tiny_data, monkeypatch
+):
+    """A new class can steal old examples although the old logits do not move at all."""
+
+    def boost_new_classes(weights, *args, eligible_classes, **kwargs):
+        # Bias of the two newest classes ends up far above every existing class's bias.
+        weights[0, eligible_classes[-2:]] = weights[0, eligible_classes].max() + 1000.0
+        return weights
+
+    monkeypatch.setattr(experiment_module, "fit_task", boost_new_classes)
+    tasks, memory = make_task_plan(tiny_data.train_y, 0, 2)
+    run = run_condition("fixed_linear", tiny_data, tasks, memory, seed=0, epochs=1)
+    assert run["old_takeover_fraction_by_task"] == [None, 1.0, 1.0, 1.0, 1.0]
+    assert run["old_flip_fraction_by_task"] == [None, 0.0, 0.0, 0.0, 0.0]
+    assert run["old_logit_change_by_task"] == [None, 0.0, 0.0, 0.0, 0.0]
+    assert run["mean_old_takeover_fraction"] == 1.0
+    # The accuracy matrix shows the consequence: old experiences collapse.
+    final = run["accuracy_matrix"][-1]
+    assert final[0] == 0.0 and final[-1] > 0.0
+
+
+def test_takeover_bounds_the_accuracy_on_old_experiences(tiny_data):
+    """An old example predicted as a new class is wrong, so accuracy <= 1 - takeover.
+
+    Every class has the same number of test samples, so the mean over the old experiences'
+    accuracies is the accuracy over all old test inputs.
+    """
+    tasks, memory = make_task_plan(tiny_data.train_y, 0, 2)
+    for condition in CONDITIONS:
+        run = run_condition(condition, tiny_data, tasks, memory, seed=0, epochs=2)
+        for task in range(1, 5):
+            old_accuracy = np.mean(run["accuracy_matrix"][task][:task])
+            assert (
+                old_accuracy <= 1.0 - run["old_takeover_fraction_by_task"][task] + 1e-9
+            )
 
 
 def test_frozen_old_changes_old_logits_less_than_ordinary_training(tiny_data):
