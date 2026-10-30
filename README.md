@@ -187,7 +187,7 @@ All numbers are mean +/- sample standard deviation over seeds, produced by the c
 
 | | degree 1 throughout | grow 1..10 | fixed degree 10 |
 | --- | --- | --- | --- |
-| final mean accuracy / forgetting | 0.910 +/- 0.004 / 0.043 | 0.965 +/- 0.004 / 0.008 | 0.970 +/- 0.005 / 0.011 |
+| final mean accuracy / forgetting | 0.910 +/- 0.003 / 0.043 | 0.965 +/- 0.004 / 0.008 | 0.970 +/- 0.005 / 0.011 |
 
 - **Capacity matters; gradual growth does not.** Growing and fixed degree 10 are within one standard deviation at the end; the fixed model is better after experience 1 (0.988 versus 0.959) and they converge by experiences 8-10, because zero-initialised expansion preserves the function and replay covers all experiences.
 - **The shared rate is not converged** (`ordinary`: 0.967 at 300, 0.979 at 1,000, 0.991 at 10,000 epochs). A single per-feature setting, `lr_feature_power = 1` with `lr = 4`, which was picked by hand and not selected on held-out data, reaches 0.992 for growing and 0.991 for fixed degree 10 in 300 epochs.

@@ -50,3 +50,17 @@ def test_notebook_executes_top_to_bottom_in_a_clean_kernel(path):
             for output in cell.outputs
         )
         assert "fixed_capacity" in printed and "ordinary_no_replay" in printed
+
+
+@pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.name)
+def test_notebooks_report_sample_standard_deviations(path):
+    """Results are documented as sample std (ddof=1); NumPy's default is the population std."""
+    import re
+
+    notebook = json.loads(path.read_text(encoding="utf-8"))
+    for index, cell in enumerate(notebook["cells"]):
+        if cell["cell_type"] != "code":
+            continue
+        source = "".join(cell["source"])
+        for call in re.finditer(r"\bstd\(([^()]*(?:\([^()]*\)[^()]*)*)\)", source):
+            assert "ddof=1" in call.group(1), (path.name, index, call.group(0))
