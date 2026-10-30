@@ -17,6 +17,8 @@ implicit-kernel SVM.
 
 from __future__ import annotations
 
+import itertools
+
 import numpy as np
 
 
@@ -31,10 +33,46 @@ def _validate_degree(degree: int) -> int:
     return int(degree)
 
 
+def monomial_exponents(n_variables: int, degree: int) -> np.ndarray:
+    """Exponent rows of all monomials of total degree <= degree, in prefix-stable order.
+
+    Shared by the binary (2-variable) and class-incremental (n-variable) experiments.
+    Order: by total degree; within a degree, lexicographic over variable indices, i.e.
+    decreasing power of the first variable. For two variables this is exactly the order
+    documented in the module docstring, so degree-d features are a prefix of degree-(d+1).
+    """
+    degree = _validate_degree(degree)
+    if n_variables < 1:
+        raise ValueError("n_variables must be positive")
+    rows = [np.zeros(n_variables, dtype=np.int16)]
+    for total_degree in range(1, degree + 1):
+        for indices in itertools.combinations_with_replacement(
+            range(n_variables), total_degree
+        ):
+            rows.append(np.bincount(indices, minlength=n_variables).astype(np.int16))
+    return np.stack(rows)
+
+
+def append_zero_coefficients(weights: np.ndarray, new_feature_count: int) -> np.ndarray:
+    """Copy of ``weights`` with zero rows appended up to ``new_feature_count`` rows.
+
+    Every existing coefficient is copied unchanged and the new ones are zero, so a model
+    built on a prefix-compatible feature map computes exactly the same outputs. Works for a
+    coefficient vector (binary model) and a coefficient matrix (softmax head) alike. Always
+    returns a new array.
+    """
+    weights = np.asarray(weights)
+    if new_feature_count < weights.shape[0]:
+        raise ValueError("feature expansion cannot shrink the weight array")
+    expanded = np.zeros((new_feature_count, *weights.shape[1:]), dtype=weights.dtype)
+    expanded[: weights.shape[0]] = weights
+    return expanded
+
+
 def feature_exponents(degree: int):
     """List of (i, j) meaning x1^i * x2^j, in the canonical order."""
     degree = _validate_degree(degree)
-    return [(i, k - i) for k in range(degree + 1) for i in range(k, -1, -1)]
+    return [(int(i), int(j)) for i, j in monomial_exponents(2, degree)]
 
 
 def _name(i: int, j: int) -> str:

@@ -224,8 +224,8 @@ def test_strategy_b_in_the_loop_respects_constraint_and_frozen_mask():
     assert all(r.frozen_max_change == 0.0 for r in res_new.records[1:])
 
 
-def test_strategy_a_all_equals_ordinary_training():
-    """Documented fact: an unconstrained g over all coefficients is ordinary training."""
+def test_unconstrained_composed_all_equals_ordinary_training():
+    """An unconstrained composed model over all coefficients equals ordinary training."""
     exps = make_experiences(n_train=60, n_test=80, seed=1)
     kw = {
         "epochs": 40,
@@ -235,7 +235,11 @@ def test_strategy_a_all_equals_ordinary_training():
         "stop_after": 4,
     }
     a = run_continual(exps, make_config("ordinary", **kw)).records[-1].w_after
-    b = run_continual(exps, make_config("strategy_a_all", **kw)).records[-1].w_after
+    b = (
+        run_continual(exps, make_config("ordinary", composed=True, scope="all", **kw))
+        .records[-1]
+        .w_after
+    )
     np.testing.assert_allclose(a, b, atol=1e-10)
 
 
@@ -365,3 +369,38 @@ def test_preservation_strategy_requires_reference_points():
     cfg = make_config("strategy_b_all", n_ref_per_exp=0, epochs=1)
     with pytest.raises(ValueError, match="n_ref_per_exp must be >= 1"):
         run_continual(exps, cfg)
+
+
+def test_integer_learning_rate_works_with_fractional_factors_and_feature_power():
+    exps = make_experiences(n_experiences=3, seed=0)
+    for kwargs in ({"lr_old_factor": 0.1}, {"lr_feature_power": 1.0}):
+        result = run_continual(exps, make_config("ordinary", lr=1, epochs=5, **kwargs))
+        assert np.isfinite(result.records[-1].mean_acc)
+
+
+def test_feature_power_zero_changes_nothing_and_positive_power_rescales_rates():
+    exps = make_experiences(n_experiences=3, seed=0)
+    base = run_continual(exps, make_config("ordinary", epochs=20, seed=0))
+    same = run_continual(
+        exps, make_config("ordinary", epochs=20, seed=0, lr_feature_power=0.0)
+    )
+    np.testing.assert_array_equal(base.records[-1].w_after, same.records[-1].w_after)
+    scaled = run_continual(
+        exps, make_config("ordinary", epochs=20, seed=0, lr_feature_power=1.0)
+    )
+    rates = scaled.records[-1].lr_vector
+    assert rates.min() == pytest.approx(
+        0.5
+    )  # the largest-scale feature keeps the base rate
+    assert (
+        rates.max() > 2 * rates.min()
+    )  # smaller high-degree features get larger steps
+    assert not np.array_equal(base.records[-1].w_after, scaled.records[-1].w_after)
+
+
+def test_feature_power_is_validated_and_rejects_preserving_updates():
+    exps = make_experiences(n_experiences=2, seed=0)
+    with pytest.raises(ValueError, match="lr_feature_power"):
+        run_continual(exps, make_config("ordinary", lr_feature_power=-1.0))
+    with pytest.raises(ValueError, match="shared rate"):
+        run_continual(exps, make_config("strategy_b_all", lr_feature_power=1.0))

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .features import PolynomialFeatures
+from .features import PolynomialFeatures, append_zero_coefficients
 
 
 def sigmoid(z):
@@ -91,7 +91,7 @@ class PolynomialLogisticModel:
         assert (
             new.feature_names[: self.n_features] == self.feature_names
         )  # prefix property
-        new.w[: self.n_features] = self.w
+        new.w = append_zero_coefficients(self.w, new.n_features)
         return new
 
     def with_added(self, g: PolynomialLogisticModel):
