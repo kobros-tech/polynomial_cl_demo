@@ -108,7 +108,7 @@ python experiments/per_degree_lr.py --dataset split_mnist --experiment sampling 
 python experiments/per_degree_lr.py --dataset split_mnist --experiment per-degree --strategies ordinary --samplings class_balanced --output results/per_degree/cell_ordinary_class_balanced.json
 ```
 
-Protocol of the per-degree study: the shared rate is chosen from {0.01, 0.03, 0.1, 0.3, 1} on a 10% validation split (seeds 0-1); one degree group at a time is then made 4x larger or 4x smaller; one follow-up vector takes each group's best factor; all vectors are run on the test set with disjoint seeds 2-6, and the vector marked as selected is the one with the best validation accuracy. Joint (shuffled, all-class) training on the same features is available as `run_joint_reference` and is shown in notebook 01; it has no forgetting.
+Protocol of the per-degree study: every candidate is measured on a 10% validation split (seeds 0-1) for final mean accuracy, mean forgetting and newest-experience accuracy, so accuracy alone never decides. The shared rate is chosen from {0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30}; one degree group at a time is then made 4x larger or 4x smaller; one follow-up vector takes each group's best factor; and all vectors are run on the test set with disjoint seeds 2-6. The Pareto front on (accuracy, forgetting) is recorded for every cell; where one vector is needed, the front member with the largest accuracy minus forgetting is marked `selected` (optionally with a floor `--min-current-accuracy` on newest-experience accuracy). `selected` is a convenience for reading results, not a claim of optimality. Joint (shuffled, all-class) training on the same features is available as `run_joint_reference` and is shown in notebook 01; it has no forgetting.
 
 ### How to read the results
 
@@ -209,18 +209,27 @@ All numbers are mean +/- sample standard deviation over seeds, produced by the c
 | `frozen_old` | 0.274 / 0.893 / 0.820 / 0.925 | 0.667 / 0.493 / 0.102 / 0.077 |
 | Strategy B, 3 refs | 0.538 / 0.683 / 0.405 / 0.381 | 0.630 / 0.186 / 0.053 / 0.058 |
 
+- **Budget:** both policies make the same number of updates (315 in the last experience); `shuffled` processes exactly the 40,200 available examples and `class_balanced` 40,320 (+0.3%, because every batch is full). Both counts are stored per experience.
 - **The imbalance is a major cause of takeover and forgetting** (the untested explanation above is now tested): balancing the batches removes most takeover. It costs plasticity, so neither policy is best on both axes. Without replay there is nothing to balance.
 
-**Per-degree rate vectors (test seeds 2-6; rates and vectors selected on validation seeds 0-1).** `ordinary`, accuracy +/- std / newest / forgetting:
+**Per-degree rate vectors (test seeds 2-6; rates and vectors chosen on validation seeds 0-1).** Accuracy +/- std over seeds / newest-experience accuracy / forgetting; "shared" is the validation-chosen single rate (grid up to 30), "selected" the vector chosen by the rule above:
 
-| sampling | shared rate (validation best, 1) | selected vector | shared rate 10 or 30 (checked beyond the grid) |
+| strategy | sampling | shared | selected vector `[d0, d1, d2, d3]` |
 | --- | --- | --- | --- |
-| `shuffled` | 0.476 +/- 0.008 / 0.918 / 0.583 | `[0.25, 4, 4, 4]` 0.565 +/- 0.008 / 0.927 / 0.479 | 30: 0.604 +/- 0.082 / 0.881 / 0.372 |
-| `class_balanced` | 0.751 +/- 0.002 / 0.657 / 0.088 | `[0.25, 1, 4, 4]` 0.774 +/- 0.003 / 0.712 / 0.098 | 10: 0.774 +/- 0.007 / 0.749 / 0.120 |
+| `ordinary` | balanced | 3: 0.771 +/- 0.003 / 0.708 / 0.098 | `[0.75, 0.75, 0.75, 12]`: 0.776 +/- 0.005 / 0.730 / 0.101 |
+| `small_old_lr` | balanced | 3: 0.764 +/- 0.002 / 0.697 / 0.102 | `[3, 3, 3, 12]`: 0.780 +/- 0.003 / 0.729 / 0.102 |
+| `frozen_old` | balanced | 3: 0.761 +/- 0.003 / 0.694 / 0.103 | `[3, 3, 3, 12]`: 0.776 +/- 0.005 / 0.726 / 0.104 |
+| Strategy B | balanced | 3: 0.765 +/- 0.003 / 0.670 / 0.093 | `[12, 0.75, 0.75, 3]`: 0.759 +/- 0.002 / 0.650 / 0.085 |
+| `ordinary` | shuffled | 30: 0.604 +/- 0.082 / 0.881 / 0.372 | `[30, 30, 7.5, 30]`: 0.597 +/- 0.067 / 0.881 / 0.382 |
+| `small_old_lr` | shuffled | 10: 0.560 +/- 0.047 / 0.898 / 0.462 | `[2.5, 2.5, 10, 40]`: 0.591 +/- 0.033 / 0.906 / 0.435 |
+| `frozen_old` | shuffled | 30: 0.475 +/- 0.084 / 0.862 / 0.541 | `[7.5, 30, 30, 120]`: 0.522 +/- 0.071 / 0.901 / 0.501 |
+| Strategy B | shuffled | 30: 0.645 +/- 0.007 / 0.919 / 0.373 | `[120, 120, 120, 120]`: 0.650 +/- 0.016 / 0.896 / 0.334 |
 
-- Raising the quadratic or cubic rate improved accuracy, and lowering it hurt, in all ten (strategy, sampling) cells; the constant and linear groups had smaller and less consistent effects (for example, 4x on the linear group helped `small_old_lr` with shuffled sampling, 0.447 versus 0.389, but did nothing under balanced sampling). The selected shared rate, however, was at the edge of the grid in every cell, and a larger shared rate reaches the same accuracy (balanced) or a higher but unstable one (shuffled). **The data do not show a per-degree benefit beyond a single properly tuned shared rate**; the likely reading is that the quadratic and cubic features, down-scaled by 1/sqrt(group size), simply need larger steps.
-- **No strategy is shown optimal.** Under balanced sampling `ordinary`, `small_old_lr` and `frozen_old` differ by about 0.01; Strategy B has the least forgetting and the weakest newest-experience accuracy. The repository exposes five class-incremental strategies, not eight; none were added.
-- Limits: factors 0.25 and 4 only, one-at-a-time perturbations plus one greedy follow-up, 3 epochs, one dataset and projection, the beyond-grid check covers `ordinary` only, and a seed spread that understates dataset variability.
+- **Balanced sampling is where rate choices are stable; shuffled results vary by seed.** With balanced sampling every strategy reaches 0.76-0.78 at a shared rate of 3. For `ordinary`, `small_old_lr` and `frozen_old`, a 4x larger cubic rate adds about 0.005-0.016 accuracy and about 0.03 newest-experience accuracy at unchanged forgetting; this agrees across three strategies and five seeds but is small, comes from one dataset and one projection, and for `ordinary` is within one standard deviation. Strategy B gains nothing. Shuffled sampling needs very large rates (10-30), and the seed spread (0.03-0.08) is as large as the differences between vectors, so no shuffled difference between vectors is established; the `[120, 120, 120, 120]` vector for Strategy B is a uniform rate, not a per-degree effect.
+- The earlier grid ended at 1 and every cell chose its upper edge; the grid now reaches 30 (a separate check, `results/per_degree/boundary_check_shared_rate*.json`, is kept). Per-degree vectors help much less once the shared rate is tuned, so the large gains seen against the old grid-edge reference were mostly a larger effective step.
+- **No strategy is shown optimal.** Under balanced sampling `ordinary`, `small_old_lr` and `frozen_old` differ by about 0.005 after tuning; Strategy B has the least forgetting among them but the weakest newest-experience accuracy.
+- **Strategy count.** The class-incremental code has five strategies (`ordinary`, `ordinary_no_replay`, `small_old_lr`, `frozen_old`, `strategy_b`). The eight of older branches were `ordinary_no_replay`, `ordinary`, `frozen_old`, `small_old_lr`, `strategy_a_all`, `strategy_a_new`, `strategy_b_all` and `strategy_b_new`; `main` removed the two Strategy A entries as identical to `ordinary` and `frozen_old`, leaving six distinct rules. Only `strategy_b_new` (constraint on the new coefficients only) has no class-incremental counterpart, and it was not added here.
+- Limits: factors 0.25 and 4 only, one-at-a-time perturbations plus one greedy follow-up, 3 epochs, one dataset and projection, selection on two validation seeds, and a seed spread that understates dataset variability.
 
 ### Supporting binary sinusoid (five seeds, 300 epochs, shared rate lr 0.5)
 
