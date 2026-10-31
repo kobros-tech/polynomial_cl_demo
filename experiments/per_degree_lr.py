@@ -59,6 +59,10 @@ def main():
     )
     p.add_argument("--select-seeds", nargs="+", type=int, default=[0, 1])
     p.add_argument("--test-seeds", nargs="+", type=int, default=[2, 3, 4, 5, 6])
+    p.add_argument(
+        "--min-current-accuracy", type=float, default=None,
+        help="per-degree: validation floor on newest-experience accuracy for selection",
+    )  # fmt: skip
     p.add_argument("--validation-fraction", type=float, default=0.1)
     p.add_argument("--epochs", type=int, default=EPOCHS)
     p.add_argument("--batch-size", type=int, default=BATCH_SIZE)
@@ -98,9 +102,10 @@ def main():
             args.test_seeds,
             strategies=args.strategies,
             samplings=args.samplings,
+            min_current_accuracy=args.min_current_accuracy,
             progress=lambda c: print(
                 f"{c['sampling']:15s} {c['strategy']:20s} base={c['base_rate']:g} "
-                f"selected={c['selected']} val={c['validation_scores'][c['selected']]:.3f}",
+                f"selected={c['selected']} pareto={c['pareto']}",
                 flush=True,
             ),
             **settings,
