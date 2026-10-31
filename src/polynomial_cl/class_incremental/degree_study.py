@@ -19,9 +19,18 @@ Protocol (all selection on validation data, never on the test set):
      validation (``combine_best_directions``); this is one additional vector, not a grid.
 
 3. ``evaluate_vectors``: the candidate vectors are then run on the test data with *test* seeds
-   that are disjoint from the selection seeds. The vector marked ``selected`` is the one with
-   the best validation accuracy; the others are reported so the rate vectors can be read
-   alongside their results.
+   that are disjoint from the selection seeds. The others are reported too, so the rate vectors
+   can be read alongside their results.
+
+Selection rule (validation data only; accuracy alone is never the criterion): every candidate
+is scored on final mean accuracy (higher is better), mean forgetting (lower is better) and
+final accuracy on the newest experience. ``pareto_front`` lists the candidates that no other
+candidate beats on both accuracy and forgetting. Where a single vector is needed (the shared
+reference of stage 1, the direction of each group in stage 3, the vector marked ``selected``)
+the rule is: keep the candidates whose newest-experience accuracy is at least
+``min_current_accuracy`` (default: no floor), restrict to the Pareto front, and take the one
+with the largest ``accuracy - forgetting`` (``tradeoff_score``). The whole Pareto front is
+reported; ``selected`` is a convenience for plots, not a claim of optimality.
 """
 
 from __future__ import annotations
@@ -43,9 +52,9 @@ from .experiment import (
     run_condition,
 )
 
-SHARED_RATE_GRID = (0.01, 0.03, 0.1, 0.3, 1.0)
+SHARED_RATE_GRID = (0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0)
 RATE_FACTORS = (0.25, 4.0)
-SELECTION_METRIC = "final_mean_accuracy"
+SELECTION_METRICS = ("final_mean_accuracy", "mean_forgetting", "final_current_accuracy")
 TRADEOFF_METRICS = (*STRATEGY_METRICS, "final_current_accuracy")
 
 
@@ -86,6 +95,47 @@ def _settings(epochs, batch_size, memory_per_class, n_ref_per_class):
 def mean_metric(runs, metric):
     """Mean of one scalar metric over runs."""
     return float(np.mean([r[metric] for r in runs]))
+
+
+def tradeoff_score(metrics):
+    """Accuracy minus forgetting: rewards learning and penalises losing old classes."""
+    return metrics["final_mean_accuracy"] - metrics["mean_forgetting"]
+
+
+def pareto_front(metrics_by_name):
+    """Names whose (accuracy, forgetting) no other candidate beats on both, in input order."""
+    front = []
+    for name, m in metrics_by_name.items():
+        dominated = any(
+            o["final_mean_accuracy"] >= m["final_mean_accuracy"]
+            and o["mean_forgetting"] <= m["mean_forgetting"]
+            and (
+                o["final_mean_accuracy"] > m["final_mean_accuracy"]
+                or o["mean_forgetting"] < m["mean_forgetting"]
+            )
+            for other, o in metrics_by_name.items()
+            if other != name
+        )
+        if not dominated:
+            front.append(name)
+    return front
+
+
+def choose_candidate(metrics_by_name, min_current_accuracy=None):
+    """Selection rule of the module docstring; returns the chosen candidate name.
+
+    If no candidate reaches ``min_current_accuracy`` the floor is ignored for that choice
+    (a floor must not leave nothing to choose from).
+    """
+    names = list(metrics_by_name)
+    if min_current_accuracy is not None:
+        passing = [
+            n for n in names
+            if metrics_by_name[n]["final_current_accuracy"] >= min_current_accuracy
+        ]  # fmt: skip
+        names = passing or names
+    front = pareto_front({n: metrics_by_name[n] for n in names})
+    return max(front, key=lambda n: tradeoff_score(metrics_by_name[n]))
 
 
 def run_sampling_comparison(
@@ -137,7 +187,8 @@ def combine_best_directions(
 ):
     """Follow-up vector: each group takes the factor (or 1) that scored best for it.
 
-    ``scores`` maps a candidate name from ``candidate_vectors`` to its validation score; a
+    ``scores`` maps a candidate name from ``candidate_vectors`` to its validation score
+    (``tradeoff_score``, higher is better); a
     group keeps the base rate unless one of its variants beats the shared reference.
     """
     vector = [float(base)] * n_groups
@@ -164,15 +215,16 @@ def select_rate_vectors(
     n_ref_per_class=N_REF_PER_CLASS,
     shared_grid=SHARED_RATE_GRID,
     factors=RATE_FACTORS,
+    min_current_accuracy=None,
 ):
     """Stages 1-3 on validation data for one (strategy, sampling) cell.
 
-    Returns the candidate vectors (name -> vector), their validation scores (mean
-    ``SELECTION_METRIC`` over the selection seeds), and the name of the best one.
+    Returns the candidate vectors (name -> vector), their validation metrics (mean over the
+    selection seeds), the Pareto front, and the name chosen by the selection rule.
     """
     settings = _settings(epochs, batch_size, memory_per_class, n_ref_per_class)
 
-    def score(rates):
+    def measure(rates):
         runs = _run_seeds(
             validation_data,
             selection_seeds,
@@ -181,25 +233,31 @@ def select_rate_vectors(
             sampling=sampling,
             settings=settings,
         )
-        return mean_metric(runs, SELECTION_METRIC)
+        return {m: mean_metric(runs, m) for m in SELECTION_METRICS}
 
-    grid = {float(lr): score(float(lr)) for lr in shared_grid}
-    base = max(grid, key=grid.get)
+    grid = {float(lr): measure(float(lr)) for lr in shared_grid}
+    base = choose_candidate({str(k): v for k, v in grid.items()}, min_current_accuracy)
+    base = float(base)
     vectors = candidate_vectors(base, factors)
-    scores = {"shared": grid[base]}
+    metrics = {"shared": grid[base]}
     for name, vector in vectors.items():
         if name != "shared":
-            scores[name] = score(vector)
+            metrics[name] = measure(vector)
+    scores = {name: tradeoff_score(m) for name, m in metrics.items()}
     combined = combine_best_directions(base, scores, factors)
     if combined != vectors["shared"] and combined not in vectors.values():
         vectors["combined"] = combined
-        scores["combined"] = score(combined)
+        metrics["combined"] = measure(combined)
+        scores["combined"] = tradeoff_score(metrics["combined"])
     return {
         "shared_grid": {str(k): v for k, v in grid.items()},
         "base_rate": base,
         "vectors": vectors,
+        "validation_metrics": metrics,
         "validation_scores": scores,
-        "selected": max(scores, key=scores.get),
+        "pareto": pareto_front(metrics),
+        "selected": choose_candidate(metrics, min_current_accuracy),
+        "min_current_accuracy": min_current_accuracy,
     }
 
 
@@ -239,6 +297,7 @@ def run_per_degree_study(
     strategies=STRATEGIES,
     samplings=("shuffled", "class_balanced"),
     progress=None,
+    min_current_accuracy=None,
     **settings,
 ):
     """Selection on validation data, then test evaluation, for every (strategy, sampling).
@@ -255,7 +314,12 @@ def run_per_degree_study(
     for sampling in samplings:
         for strategy in strategies:
             selection = select_rate_vectors(
-                validation_data, selection_seeds, strategy, sampling, **settings
+                validation_data,
+                selection_seeds,
+                strategy,
+                sampling,
+                min_current_accuracy=min_current_accuracy,
+                **settings,
             )
             runs = evaluate_vectors(
                 test_data,
@@ -277,7 +341,7 @@ def run_per_degree_study(
     return {
         "selection_seeds": list(selection_seeds),
         "test_seeds": list(test_seeds),
-        "selection_metric": SELECTION_METRIC,
+        "selection_rule": "pareto(accuracy, forgetting), max accuracy - forgetting",
         "cells": cells,
     }
 
@@ -335,6 +399,6 @@ def load_study_cells(directory):
     return {
         "selection_seeds": first["selection_seeds"],
         "test_seeds": first["test_seeds"],
-        "selection_metric": first["selection_metric"],
+        "selection_rule": first["selection_rule"],
         "cells": cells,
     }

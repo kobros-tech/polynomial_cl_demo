@@ -219,6 +219,10 @@ def fit_task(
     if stats is not None:
         stats["samples_drawn_by_class"] = drawn.tolist()
         stats["n_updates"] = n_updates
+        # budget accounting: shuffled processes exactly epochs x rows (its last batch can be
+        # short); class_balanced always fills every batch, so it can present slightly more
+        stats["examples_processed"] = int(drawn.sum())
+        stats["examples_available"] = int(epochs * len(labels))
         stats["mean_batch_composition"] = (drawn / n_updates).tolist()
         stats["pool_sizes_by_class"] = np.bincount(
             eligible_classes[label_columns], minlength=weights.shape[1]

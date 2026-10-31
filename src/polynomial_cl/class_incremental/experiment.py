@@ -137,7 +137,7 @@ def accuracy_by_task(weights, test_x, test_y, n_tasks_seen):
 INDICATORS = (
     "train_loss_by_task",  # [loss before, loss after] on this experience's training set (+ replay)
     "l1_update_by_task",  # sum |w_after - w_before| over the coefficients used this experience
-    "n_trainable_by_task",  # coefficients that may change (null-space dimension x classes for B)
+    "n_trainable_by_task",  # coefficients that may change (B: rank of sqrt(D) N, x classes)
     "null_dim_by_task",  # strategy_b only: dimension left free by the constraint
     "old_logit_change_by_task",  # max change of old-class logits on old-class test inputs
     "old_flip_fraction_by_task",  # old-class test inputs whose prediction among old classes changed
@@ -153,18 +153,29 @@ def _mean_after_first(values):
 
 def _record_indicators(
     out, weights, before, data, count, task, old_test, refs, scale, null_basis,
-    loss_before, loss_after,
+    loss_before, loss_after, step_scale=None,
 ):  # fmt: skip
     n_seen, old_classes = 2 * (task + 1), 2 * task
     used = (slice(None, count), slice(None, n_seen))
     out["train_loss_by_task"].append([loss_before, loss_after])
     out["l1_update_by_task"].append(float(np.abs(weights - before)[used].sum()))
     if null_basis is not None:
-        trainable = null_basis.shape[1] * n_seen
-    elif scale is not None:
-        trainable = int((scale[used] > 0).sum())
+        # The step is sqrt(D) N N^T sqrt(D) g, so the directions that can actually move are the
+        # column space of sqrt(D) N (rank), not all columns of N: a zero-rate feature group
+        # contributes null-space directions that are multiplied by 0.
+        free = null_basis
+        if step_scale is not None:
+            free = np.sqrt(np.asarray(step_scale, np.float64))[:, None] * null_basis
+        effective = int(np.linalg.matrix_rank(free)) if free.size else 0
+        trainable = effective * n_seen
     else:
-        trainable = count * n_seen
+        # coefficient is trainable if neither its update mask nor its rate (row) is zero
+        allowed = np.ones((count, n_seen), bool)
+        if scale is not None:
+            allowed &= scale[used] > 0
+        if step_scale is not None:
+            allowed &= (np.asarray(step_scale)[:count] > 0)[:, None]
+        trainable = int(allowed.sum())
     out["n_trainable_by_task"].append(int(trainable))
     out["null_dim_by_task"].append(
         None if null_basis is None else int(null_basis.shape[1])
@@ -202,7 +213,7 @@ def _record_indicators(
 DEGREE_DIAGNOSTICS = (
     "lr",  # rate applied to the group in this experience (0 = frozen)
     "n_coefficients",  # rows in the group x classes seen so far
-    "n_trainable",  # of those, coefficients with a positive rate and update scale
+    "n_trainable",  # of those, positive rate and update scale (Strategy B: upper bound)
     "mean_gradient_l1",  # mean over updates of the raw gradient L1 (before any scaling)
     "mean_step_l1",  # mean over updates of the applied step L1 (after rates and masks)
     "coef_change_l1",  # sum |w_after - w_before| over the group's seen-class coefficients
@@ -407,6 +418,8 @@ def run_condition(
                     "pool_sizes_by_class",
                     "samples_drawn_by_class",
                     "n_updates",
+                    "examples_processed",
+                    "examples_available",
                     "mean_batch_composition",
                 )
             }
@@ -414,6 +427,7 @@ def run_condition(
         _record_indicators(
             indicators, weights, before, data, count, task, old_test, refs, scale, null_basis,
             loss_before, cross_entropy(weights, train_x, train_y, n_seen),
+            step_scale=step_scale,
         )  # fmt: skip
         matrix[task, : task + 1] = accuracy_by_task(
             weights, data.test_x[:, :count], data.test_y, task + 1

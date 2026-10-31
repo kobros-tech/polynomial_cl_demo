@@ -509,3 +509,95 @@ def test_cell_files_are_merged_and_inconsistent_seeds_rejected(tmp_path, tiny_da
     (tmp_path / "cell_zz.json").write_text(json.dumps(other))
     with pytest.raises(ValueError, match="different seed sets"):
         load_study_cells(tmp_path)
+
+
+def test_strategy_b_trainable_dimension_excludes_zero_rate_directions(tiny_data):
+    rates = [0.3, 0.0, 0.1, 0.2]  # the linear group never moves
+    run = _run(tiny_data, "strategy_b", learning_rate=rates)
+    index = degree_of_feature(2, 3)
+    counts = [3, 6, 10, 10, 10]  # features per experience (degrees 1, 2, 3, 3, 3)
+    naive_overcounts = False
+    for task, (trainable, null_dim) in enumerate(
+        zip(run["n_trainable_by_task"], run["null_dim_by_task"])
+    ):
+        n_seen = 2 * (task + 1)
+        active = int((np.array(rates)[index[: counts[task]]] > 0).sum())
+        assert trainable % n_seen == 0
+        assert trainable // n_seen <= active  # free directions live on active rows
+        if null_dim is None:  # experience 1: no constraint yet, only the rates restrict
+            assert trainable == active * n_seen
+        else:
+            assert trainable // n_seen <= null_dim
+            naive_overcounts |= trainable < null_dim * n_seen
+    # without zero rates nothing changes: the effective dimension is the null dimension
+    full = _run(tiny_data, "strategy_b", learning_rate=0.05)
+    assert full["n_trainable_by_task"][1:] == [
+        d * 2 * (t + 1) for t, d in enumerate(full["null_dim_by_task"]) if t
+    ]
+
+
+def test_sampling_budget_reports_updates_and_examples_processed(tiny_data):
+    shuffled = _run(tiny_data, sampling="shuffled")["sampling_by_task"]
+    balanced = _run(tiny_data, sampling="class_balanced")["sampling_by_task"]
+    for a, b in zip(shuffled, balanced):
+        assert a["n_updates"] == b["n_updates"]
+        assert (
+            a["examples_processed"] == a["examples_available"]
+        )  # nothing dropped or added
+        assert sum(a["samples_drawn_by_class"]) == a["examples_processed"]
+        assert b["examples_processed"] == sum(b["samples_drawn_by_class"])
+        # full batches: at most one batch worth of extra presentations per epoch (2 epochs, 8)
+        assert 0 <= b["examples_processed"] - b["examples_available"] < 2 * 8
+
+
+def _m(acc, forg, cur):
+    return {
+        "final_mean_accuracy": acc,
+        "mean_forgetting": forg,
+        "final_current_accuracy": cur,
+    }
+
+
+def test_pareto_front_and_selection_consider_forgetting_not_only_accuracy():
+    from polynomial_cl.class_incremental.degree_study import (
+        choose_candidate,
+        pareto_front,
+        tradeoff_score,
+    )
+
+    metrics = {
+        "high_acc_forgets": _m(0.60, 0.50, 0.90),  # best accuracy, heavy forgetting
+        "balanced": _m(0.58, 0.10, 0.60),
+        "dominated": _m(0.50, 0.30, 0.50),  # worse than "balanced" on both
+        "rigid": _m(0.40, 0.02, 0.10),  # least forgetting, hardly learns
+    }
+    assert pareto_front(metrics) == ["high_acc_forgets", "balanced", "rigid"]
+    assert (
+        max(metrics, key=lambda n: metrics[n]["final_mean_accuracy"])
+        == "high_acc_forgets"
+    )
+    assert (
+        choose_candidate(metrics) == "balanced"
+    )  # accuracy alone would pick the other
+    assert tradeoff_score(metrics["balanced"]) == pytest.approx(0.48)
+    # a floor on newest-experience accuracy removes the rigid candidate and can change the choice
+    metrics["rigid"] = _m(0.58, 0.01, 0.10)
+    assert choose_candidate(metrics) == "rigid"
+    assert choose_candidate(metrics, min_current_accuracy=0.5) == "balanced"
+    # an unreachable floor is ignored rather than leaving nothing to choose
+    assert choose_candidate(metrics, min_current_accuracy=0.99) == "rigid"
+
+
+def test_study_cells_report_validation_metrics_and_the_pareto_front(tiny_data):
+    study = run_per_degree_study(
+        tiny_data, tiny_data, [0], [1], strategies=("ordinary",), samplings=("shuffled",),
+        epochs=1, batch_size=16, memory_per_class=4, n_ref_per_class=1,
+        min_current_accuracy=0.0,
+    )  # fmt: skip
+    cell = study["cells"][0]
+    assert set(cell["validation_metrics"]) == set(cell["vectors"])
+    assert (
+        set(cell["pareto"]) <= set(cell["vectors"])
+        and cell["selected"] in cell["pareto"]
+    )
+    assert "forgetting" in study["selection_rule"]
