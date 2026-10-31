@@ -1,0 +1,340 @@
+# Copyright (c) 2026 Mohamed Alkobrosli
+# SPDX-License-Identifier: MIT
+
+"""Sampling-policy comparison and the compact per-degree learning-rate study.
+
+Protocol (all selection on validation data, never on the test set):
+
+1. ``run_sampling_comparison``: the same strategies, rates, seeds and replay memory under the
+   existing ``shuffled`` sampling and under ``class_balanced`` sampling.
+2. ``select_rate_vectors`` for one (strategy, sampling) cell, on a validation split carved out
+   of the training set with *selection* seeds:
+
+   * stage 1, shared reference: the best scalar rate from ``SHARED_RATE_GRID``;
+   * stage 2, independent vectors: from that reference, one degree group at a time is made
+     ``RATE_FACTORS`` times larger or smaller (``candidate_vectors``). Groups are not tied to
+     each other and no ordering between degrees is imposed; the vector for one run is applied
+     to all groups simultaneously;
+   * stage 3, limited follow-up: every degree group takes the factor that was best for it on
+     validation (``combine_best_directions``); this is one additional vector, not a grid.
+
+3. ``evaluate_vectors``: the candidate vectors are then run on the test data with *test* seeds
+   that are disjoint from the selection seeds. The vector marked ``selected`` is the one with
+   the best validation accuracy; the others are reported so the rate vectors can be read
+   alongside their results.
+"""
+
+from __future__ import annotations
+
+import warnings
+
+import numpy as np
+
+from ..metrics import mean_std_by_condition
+from .degree_rates import N_DEGREE_GROUPS
+from .experiment import (
+    BATCH_SIZE,
+    EPOCHS,
+    MEMORY_PER_CLASS,
+    N_REF_PER_CLASS,
+    STRATEGIES,
+    STRATEGY_METRICS,
+    make_task_plan,
+    run_condition,
+)
+
+SHARED_RATE_GRID = (0.01, 0.03, 0.1, 0.3, 1.0)
+RATE_FACTORS = (0.25, 4.0)
+SELECTION_METRIC = "final_mean_accuracy"
+TRADEOFF_METRICS = (*STRATEGY_METRICS, "final_current_accuracy")
+
+
+def _run_seeds(data, seeds, strategy, rates, *, sampling, settings):
+    """Run one strategy with one learning-rate setting for every seed (paired plans)."""
+    if not len(seeds):
+        raise ValueError("at least one seed is required")
+    runs = []
+    for seed in seeds:
+        tasks, memory = make_task_plan(data.train_y, seed, settings["memory_per_class"])
+        runs.append(
+            run_condition(
+                "expanding",
+                data,
+                tasks,
+                memory,
+                seed=seed,
+                epochs=settings["epochs"],
+                learning_rate=rates,
+                batch_size=settings["batch_size"],
+                strategy=strategy,
+                n_ref_per_class=settings["n_ref_per_class"],
+                sampling=sampling,
+            )
+        )
+    return runs
+
+
+def _settings(epochs, batch_size, memory_per_class, n_ref_per_class):
+    return {
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "memory_per_class": memory_per_class,
+        "n_ref_per_class": n_ref_per_class,
+    }
+
+
+def mean_metric(runs, metric):
+    """Mean of one scalar metric over runs."""
+    return float(np.mean([r[metric] for r in runs]))
+
+
+def run_sampling_comparison(
+    data,
+    seeds,
+    *,
+    policies=("shuffled", "class_balanced"),
+    strategies=STRATEGIES,
+    epochs=EPOCHS,
+    learning_rate=0.1,
+    batch_size=BATCH_SIZE,
+    memory_per_class=MEMORY_PER_CLASS,
+    n_ref_per_class=N_REF_PER_CLASS,
+):
+    """Same strategies, rate, seeds and replay memory under each sampling policy."""
+    settings = _settings(epochs, batch_size, memory_per_class, n_ref_per_class)
+    out = {}
+    for policy in policies:
+        runs = [
+            run
+            for strategy in strategies
+            for run in _run_seeds(
+                data, seeds, strategy, learning_rate, sampling=policy, settings=settings
+            )
+        ]
+        out[policy] = {
+            "runs": runs,
+            "summary": mean_std_by_condition(runs, TRADEOFF_METRICS, key="strategy"),
+        }
+    return out
+
+
+def candidate_vectors(base, factors=RATE_FACTORS, n_groups=N_DEGREE_GROUPS):
+    """Reference vector plus one-group-at-a-time variants; name -> rate vector.
+
+    Names are ``shared`` and ``d<k>x<factor>`` (degree group k scaled by factor).
+    """
+    vectors = {"shared": [float(base)] * n_groups}
+    for group in range(n_groups):
+        for factor in factors:
+            vector = [float(base)] * n_groups
+            vector[group] = float(base) * factor
+            vectors[f"d{group}x{factor:g}"] = vector
+    return vectors
+
+
+def combine_best_directions(
+    base, scores, factors=RATE_FACTORS, n_groups=N_DEGREE_GROUPS
+):
+    """Follow-up vector: each group takes the factor (or 1) that scored best for it.
+
+    ``scores`` maps a candidate name from ``candidate_vectors`` to its validation score; a
+    group keeps the base rate unless one of its variants beats the shared reference.
+    """
+    vector = [float(base)] * n_groups
+    for group in range(n_groups):
+        best_name, best_score = "shared", scores["shared"]
+        for factor in factors:
+            name = f"d{group}x{factor:g}"
+            if scores[name] > best_score:
+                best_name, best_score = name, scores[name]
+        if best_name != "shared":
+            vector[group] = float(base) * float(best_name.split("x")[1])
+    return vector
+
+
+def select_rate_vectors(
+    validation_data,
+    selection_seeds,
+    strategy,
+    sampling,
+    *,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    memory_per_class=MEMORY_PER_CLASS,
+    n_ref_per_class=N_REF_PER_CLASS,
+    shared_grid=SHARED_RATE_GRID,
+    factors=RATE_FACTORS,
+):
+    """Stages 1-3 on validation data for one (strategy, sampling) cell.
+
+    Returns the candidate vectors (name -> vector), their validation scores (mean
+    ``SELECTION_METRIC`` over the selection seeds), and the name of the best one.
+    """
+    settings = _settings(epochs, batch_size, memory_per_class, n_ref_per_class)
+
+    def score(rates):
+        runs = _run_seeds(
+            validation_data,
+            selection_seeds,
+            strategy,
+            rates,
+            sampling=sampling,
+            settings=settings,
+        )
+        return mean_metric(runs, SELECTION_METRIC)
+
+    grid = {float(lr): score(float(lr)) for lr in shared_grid}
+    base = max(grid, key=grid.get)
+    vectors = candidate_vectors(base, factors)
+    scores = {"shared": grid[base]}
+    for name, vector in vectors.items():
+        if name != "shared":
+            scores[name] = score(vector)
+    combined = combine_best_directions(base, scores, factors)
+    if combined != vectors["shared"] and combined not in vectors.values():
+        vectors["combined"] = combined
+        scores["combined"] = score(combined)
+    return {
+        "shared_grid": {str(k): v for k, v in grid.items()},
+        "base_rate": base,
+        "vectors": vectors,
+        "validation_scores": scores,
+        "selected": max(scores, key=scores.get),
+    }
+
+
+def evaluate_vectors(
+    test_data,
+    test_seeds,
+    strategy,
+    sampling,
+    vectors,
+    *,
+    epochs=EPOCHS,
+    batch_size=BATCH_SIZE,
+    memory_per_class=MEMORY_PER_CLASS,
+    n_ref_per_class=N_REF_PER_CLASS,
+):
+    """Run every named vector on the test data; returns name -> list of run records."""
+    settings = _settings(epochs, batch_size, memory_per_class, n_ref_per_class)
+    return {
+        name: _run_seeds(
+            test_data,
+            test_seeds,
+            strategy,
+            vector,
+            sampling=sampling,
+            settings=settings,
+        )
+        for name, vector in vectors.items()
+    }
+
+
+def run_per_degree_study(
+    validation_data,
+    test_data,
+    selection_seeds,
+    test_seeds,
+    *,
+    strategies=STRATEGIES,
+    samplings=("shuffled", "class_balanced"),
+    progress=None,
+    **settings,
+):
+    """Selection on validation data, then test evaluation, for every (strategy, sampling).
+
+    The selection and test seeds must be disjoint. Returns a JSON-serialisable dict.
+    """
+    shared = sorted(set(selection_seeds) & set(test_seeds))
+    if shared:
+        raise ValueError(
+            f"selection and test seeds overlap on {shared}: the same stochastic runs "
+            "would choose the rates and then be reported as the test estimate"
+        )
+    cells = []
+    for sampling in samplings:
+        for strategy in strategies:
+            selection = select_rate_vectors(
+                validation_data, selection_seeds, strategy, sampling, **settings
+            )
+            runs = evaluate_vectors(
+                test_data,
+                test_seeds,
+                strategy,
+                sampling,
+                selection["vectors"],
+                **settings,
+            )
+            cell = {
+                "strategy": strategy,
+                "sampling": sampling,
+                **selection,
+                "runs": runs,
+            }
+            cells.append(cell)
+            if progress:
+                progress(cell)
+    return {
+        "selection_seeds": list(selection_seeds),
+        "test_seeds": list(test_seeds),
+        "selection_metric": SELECTION_METRIC,
+        "cells": cells,
+    }
+
+
+def vector_summary(runs, metrics=TRADEOFF_METRICS):
+    """Mean and sample std over seeds of the trade-off metrics for one list of runs."""
+    out = {}
+    for metric in metrics:
+        values = np.array([r[metric] for r in runs], dtype=float)
+        out[metric] = {
+            "mean": float(values.mean()),
+            "std": float(values.std(ddof=1)) if len(values) > 1 else 0.0,
+        }
+    return out
+
+
+def mean_degree_diagnostic(runs, key):
+    """(n_experiences, n_degree_groups) mean over runs of a degree diagnostic (NaN if absent)."""
+    stacked = np.array(
+        [
+            [
+                [np.nan if v is None else v for v in row]
+                for row in r["degree_diagnostics"][key]
+            ]
+            for r in runs
+        ],
+        dtype=float,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter(
+            "ignore", RuntimeWarning
+        )  # all-NaN column = inactive group
+        return np.nanmean(stacked, axis=0)
+
+
+def load_study_cells(directory):
+    """Merge the ``cell_*.json`` files written by ``experiments/per_degree_lr.py``.
+
+    Returns the same structure as ``run_per_degree_study`` (``cells`` sorted by sampling and
+    strategy), or None if the directory has no cell files. Seed sets must agree across files.
+    """
+    import json
+    from pathlib import Path
+
+    files = sorted(Path(directory).glob("cell_*.json"))
+    if not files:
+        return None
+    payloads = [json.loads(f.read_text()) for f in files]
+    seeds = {(tuple(p["selection_seeds"]), tuple(p["test_seeds"])) for p in payloads}
+    if len(seeds) != 1:
+        raise ValueError("cell files were produced with different seed sets")
+    cells = [c for p in payloads for c in p["cells"]]
+    cells.sort(key=lambda c: (c["sampling"], STRATEGIES.index(c["strategy"])))
+    first = payloads[0]
+    return {
+        "selection_seeds": first["selection_seeds"],
+        "test_seeds": first["test_seeds"],
+        "selection_metric": first["selection_metric"],
+        "cells": cells,
+    }
