@@ -431,10 +431,14 @@ def run_condition(
         if per_degree:
             if np.any(effective_rates[:n_active] > 0):
                 base_rate, group_scale = step_scale_for(effective_rates, group_index)
-            else:  # every active group is frozen by the control: nothing may move
+            elif control is not None:
+                # Explicit degree control may freeze every currently active group.
                 trains = False
                 base_rate = 1.0
                 group_scale = np.zeros(count, np.float32)
+            else:
+                # Preserve validation for ordinary per-degree learning rates.
+                base_rate, group_scale = step_scale_for(effective_rates, group_index)
         step_scale = feature_scale
         if group_scale is not None:
             step_scale = (
