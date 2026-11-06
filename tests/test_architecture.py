@@ -113,24 +113,16 @@ def test_binary_models_and_trainers_do_not_depend_on_class_incremental_code():
 
 
 def test_every_module_imports_in_a_fresh_interpreter_order():
-    import os
     import subprocess
     import sys
 
     for module in sorted(_modules()):
-        env = os.environ.copy()
-        src = str(ROOT / "src")
-        env["PYTHONPATH"] = os.pathsep.join(
-            filter(None, (src, env.get("PYTHONPATH", "")))
-        )
-
         done = subprocess.run(
             [sys.executable, "-c", f"import {module}"],
             capture_output=True,
             text=True,
             check=False,
             cwd=ROOT,
-            env=env,
         )
         assert done.returncode == 0, f"{module}: {done.stderr[-300:]}"
 

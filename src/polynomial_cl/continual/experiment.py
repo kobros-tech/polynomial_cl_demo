@@ -431,13 +431,13 @@ def run_condition(
         if per_degree:
             if np.any(effective_rates[:n_active] > 0):
                 base_rate, group_scale = step_scale_for(effective_rates, group_index)
-            elif control is not None:
-                # Explicit degree control may freeze every currently active group.
+            elif control is not None and not np.any(control):
+                # An explicitly all-zero control is a valid no-op experiment.
                 trains = False
                 base_rate = 1.0
                 group_scale = np.zeros(count, np.float32)
             else:
-                # Preserve validation for ordinary per-degree learning rates.
+                # Keep the existing contract: raises when no active group has a positive rate.
                 base_rate, group_scale = step_scale_for(effective_rates, group_index)
         step_scale = feature_scale
         if group_scale is not None:

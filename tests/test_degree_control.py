@@ -184,9 +184,14 @@ def test_frozen_old_keeps_its_freezing_and_adds_the_control(data):
     b = run(data, "frozen_old", [1, 0.25, 1, 1])
     assert a["n_trainable_by_task"] == b["n_trainable_by_task"]
     assert a["accuracy_matrix"] != b["accuracy_matrix"]
-    assert all(
-        c == 0.0 for row in b["degree_diagnostics"]["logit_change"][1:] for c in [0.0]
-    )
+    da, db = a["degree_diagnostics"], b["degree_diagnostics"]
+    assert (
+        da["n_trainable"] == db["n_trainable"]
+    )  # the control never changes what is frozen
+    for task in range(1, 5):  # old rows stay frozen: fewer trainable than coefficients
+        assert da["n_trainable"][task][0] < da["n_coefficients"][task][0]
+    assert all(row[1] == 3.0 * 0.25 for row in db["lr"])  # effective rate of degree 1
+    assert all(row[1] == 3.0 for row in da["lr"])
 
 
 # ------------------------------------------------------------------ Strategy B
