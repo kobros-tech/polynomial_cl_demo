@@ -245,3 +245,11 @@ Run the scripts as `python experiments/<name>.py` from the repository root. Reus
 ## Reproducibility
 
 Everything is driven by explicit seeds (`np.random.default_rng([seed, experience, stream])` for the binary task; `default_rng(seed)` for task plans and `seed + experience` for training shuffles in the class-incremental runner). Re-running a notebook gives the same numbers. Generated experiment files go to `results/` (git-ignored); the tools need the package installed (`pip install -e .`).
+
+## Degree-control experiment
+
+`run_condition(..., degree_control_factors=[m0, m1, m2, m3])` multiplies the per-degree rates by factors in [0, 1] (effective rate `eta_d * m_d`; default all ones reproduces the original run bit for bit). The factors enter the diagonal step scale every strategy already uses, so Strategy B's null space is computed for the controlled step and its reference-logit preservation still holds. Protocol and selection rule: `src/polynomial_cl/continual/degree_control.py`.
+
+```bash
+python experiments/degree_control.py --dataset split_mnist --output results/degree_control.json
+```

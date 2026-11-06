@@ -8,7 +8,13 @@ from ``polynomial_cl.data`` (``make_synthetic_2d``, ``load_projected_mnist``); t
 sequence (``TASK_ORDER``) and the validation hold-out are defined here.
 """
 
-from .degree_rates import N_DEGREE_GROUPS, as_degree_rates, degree_of_feature
+from .degree_rates import (
+    N_DEGREE_GROUPS,
+    apply_degree_control,
+    as_degree_control,
+    as_degree_rates,
+    degree_of_feature,
+)
 from .degree_study import (
     candidate_vectors,
     degree_group_rows,
@@ -42,6 +48,8 @@ __all__ = [
     "N_DEGREE_GROUPS",
     "STRATEGIES",
     "TASK_ORDER",
+    "apply_degree_control",
+    "as_degree_control",
     "as_degree_rates",
     "candidate_vectors",
     "degree_group_rows",
