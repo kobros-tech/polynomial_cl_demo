@@ -431,8 +431,10 @@ def run_condition(
         if per_degree:
             if np.any(effective_rates[:n_active] > 0):
                 base_rate, group_scale = step_scale_for(effective_rates, group_index)
-            elif control is not None and not np.any(control):
-                # An explicitly all-zero control is a valid no-op experiment.
+            elif control is not None:
+                # Degree control zeroes every currently active group: a valid no-op
+                # experience. Later experiences that activate a group with a positive
+                # effective rate train normally.
                 trains = False
                 base_rate = 1.0
                 group_scale = np.zeros(count, np.float32)

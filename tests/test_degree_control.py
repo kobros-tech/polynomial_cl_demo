@@ -145,6 +145,21 @@ def test_all_zero_factors_also_work_for_strategy_b_and_frozen(data):
         assert all(v == 0.0 for v in r["l1_update_by_task"])
 
 
+@pytest.mark.parametrize("strategy", ["ordinary", "frozen_old", "strategy_b"])
+def test_zero_active_degrees_skip_training_until_expansion(data, strategy):
+    # Degrees 0 and 1 are the only active groups in the first experience and both are
+    # controlled to zero, although the full control vector is not all zero.
+    r = run(data, strategy, [0, 0, 1, 1])
+
+    assert r["l1_update_by_task"][0] == 0.0
+    assert r["n_trainable_by_task"][0] == 0
+    assert r["train_loss_by_task"][0][0] == r["train_loss_by_task"][0][1]
+
+    # A later experience activates a degree with a positive rate, so training resumes.
+    assert r["l1_update_by_task"][1] > 0
+    assert r["n_trainable_by_task"][1] > 0
+
+
 def test_factor_005_scales_one_update_by_5_percent_and_leaves_others_alone():
     rng = np.random.default_rng(1)
     n_features = 969  # degree 3 on 16 components
