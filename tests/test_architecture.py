@@ -113,8 +113,15 @@ def test_binary_models_and_trainers_do_not_depend_on_class_incremental_code():
 
 
 def test_every_module_imports_in_a_fresh_interpreter_order():
+    import os
     import subprocess
     import sys
+
+    # pytest's ``pythonpath`` setting does not reach child processes, so put the source
+    # tree first: otherwise a stale installed copy of the package could shadow it.
+    env = os.environ.copy()
+    src = str(ROOT / "src")
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (src, env.get("PYTHONPATH"))))
 
     for module in sorted(_modules()):
         done = subprocess.run(
@@ -123,6 +130,7 @@ def test_every_module_imports_in_a_fresh_interpreter_order():
             text=True,
             check=False,
             cwd=ROOT,
+            env=env,
         )
         assert done.returncode == 0, f"{module}: {done.stderr[-300:]}"
 
