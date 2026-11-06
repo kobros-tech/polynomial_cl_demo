@@ -76,3 +76,43 @@ def step_scale_for(
         )
     base = float(active.max())
     return base, (rates[group_index] / base).astype(np.float32)
+
+
+DEFAULT_DEGREE_CONTROL = (1.0,) * N_DEGREE_GROUPS
+
+
+def as_degree_control(factors, n_groups: int = N_DEGREE_GROUPS) -> np.ndarray:
+    """Validated float64 degree-control vector ``m`` (one factor in [0, 1] per degree group).
+
+    ``M = diag(m_0 I_0, ..., m_D I_D)`` multiplies the degree-wise rate matrix ``H``: the
+    effective rate of group d is ``rates[d] * m[d]``. 0 freezes the group, 1 keeps the
+    original update. Unlike ``as_degree_rates`` the factors are never broadcast and an
+    all-zero vector is allowed (it simply trains nothing).
+    """
+    if any(
+        isinstance(v, (bool, np.bool_))
+        for v in np.ravel(np.asarray(factors, dtype=object))
+    ):
+        raise TypeError("degree-control factors must be numbers, not booleans")
+    values = np.asarray(factors)
+    if values.dtype == bool or not np.issubdtype(values.dtype, np.number):
+        raise TypeError("degree-control factors must be numbers")
+    values = values.astype(np.float64)
+    if values.shape != (n_groups,):
+        raise ValueError(
+            f"degree-control factors must have shape ({n_groups},) "
+            f"(degrees 0..{n_groups - 1}), got {values.shape}"
+        )
+    if not np.all(np.isfinite(values)) or np.any(values < 0) or np.any(values > 1):
+        raise ValueError("degree-control factors must be finite and within [0, 1]")
+    return values.copy()
+
+
+def is_identity_control(factors) -> bool:
+    """True if every factor is exactly 1 (the control then changes nothing)."""
+    return bool(np.all(np.asarray(factors) == 1.0))
+
+
+def apply_degree_control(rates: np.ndarray, factors) -> np.ndarray:
+    """Effective per-degree rates ``H M``: elementwise product, may contain zeros."""
+    return np.asarray(rates, np.float64) * as_degree_control(factors)
